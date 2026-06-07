@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Account</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/admin-styles.css" />
+  <script src="/admin-account.js" defer></script>
+</head>
+<body>
+  <main>
+    <div id="loginBox">
+      <h1>Admin Login</h1>
+      <form id="loginForm" onsubmit="login(); return false;">
+        <label for="username">Username</label>
+        <input id="username" type="text" required />
+
+        <label for="password">Password</label>
+        <input id="password" type="password" required />
+
+        <button type="submit">Login</button>
+      </form>
+      <div id="error" style="color: red; margin-top: 0.5rem; text-align: center;"></div>
+    </div>
+
+    <div id="accountPage" style="display: none;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <h1>Admin Account</h1>
+        <div>
+          <button type="button" onclick="goBack()">Back to Dashboard</button>
+          <button type="button" onclick="logout()">Logout</button>
+        </div>
+      </div>
+
+      <div id="passwordReminderBanner" style="display:none; margin-bottom: 1rem; padding: 0.75rem; background: #fff4e5; border: 1px solid #ffcc80; color: #663c00;">
+        You must change your password before using the dashboard.
+      </div>
+
+      <form id="profileForm" onsubmit="saveProfile(); return false;">
+        <label for="profileUsername">Username</label>
+        <input id="profileUsername" type="text" required />
+
+        <label for="profileEmail">Email</label>
+        <input id="profileEmail" type="email" required />
+
+        <label for="profilePassword">Password</label>
+        <input id="profilePassword" type="password" required />
+
+        <label for="profilePasswordConfirm">Confirm Password</label>
+        <input id="profilePasswordConfirm" type="password" required />
+
+        <button type="submit">Save account</button>
+      </form>
+
+      <div id="profileMessage" style="margin-top: 1rem; min-height: 1.2rem;"></div>
+    </div>
+  </main>
+</body>
+</html>
