@@ -38,8 +38,54 @@ function ensureUsersFile() {
 function ensureAttendanceFile() {
   ensureDir();
   if (!fs.existsSync(csvFile)) {
-    fs.writeFileSync(csvFile, 'StudentName,ParentName,Timestamp\n', 'utf8');
+    fs.writeFileSync(csvFile, 'StudentName,ParentName,RoomNumber,ArrivalDate,ArrivalTime,Timestamp\n', 'utf8');
   }
+}
+
+function escapeCsv(value) {
+  return String(value || '').replace(/"/g, '""');
+}
+
+function parseCsvLine(line) {
+  const values = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const nextChar = line[index + 1];
+
+    if (char === '"' && inQuotes && nextChar === '"') {
+      current += '"';
+      index += 1;
+    } else if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      values.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  values.push(current);
+  return values;
+}
+
+function formatArrivalDate(date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function formatArrivalTime(date) {
+  return [
+    String(date.getHours()).padStart(2, '0'),
+    String(date.getMinutes()).padStart(2, '0'),
+    String(date.getSeconds()).padStart(2, '0'),
+  ].join(':');
 }
 
 function userExists(firstName, lastName) {
@@ -57,15 +103,19 @@ function userExists(firstName, lastName) {
 
 function addUser(firstName, lastName, phone, email) {
   ensureUsersFile();
-  const line = `"${firstName.replace(/"/g, '""')}","${lastName.replace(/"/g, '""')}","${phone}","${email}"\n`;
+  const line = `"${escapeCsv(firstName)}","${escapeCsv(lastName)}","${escapeCsv(phone)}","${escapeCsv(email)}"\n`;
   fs.appendFileSync(usersFile, line, 'utf8');
 }
 
-function recordCheckin(studentName, parentName) {
+function recordCheckin(studentName, parentName, roomNumber) {
   ensureAttendanceFile();
-  const timestamp = new Date().toISOString();
-  const line = `"${studentName.replace(/"/g, '""')}","${parentName.replace(/"/g, '""')}","${timestamp}"\n`;
+  const arrivedAt = new Date();
+  const timestamp = arrivedAt.toISOString();
+  const arrivalDate = formatArrivalDate(arrivedAt);
+  const arrivalTime = formatArrivalTime(arrivedAt);
+  const line = `"${escapeCsv(studentName)}","${escapeCsv(parentName)}","${escapeCsv(roomNumber)}","${arrivalDate}","${arrivalTime}","${timestamp}"\n`;
   fs.appendFileSync(csvFile, line, 'utf8');
+  return { arrivalDate, arrivalTime, timestamp };
 }
 
 function basicAuth(req, res, next) {
@@ -89,27 +139,17 @@ function basicAuth(req, res, next) {
 app.post('/checkin', (req, res) => {
   const studentName = (req.body.studentName || '').trim();
   const parentName = (req.body.parentName || '').trim();
-  if (!studentName || !parentName) {
-    return res.status(400).json({ error: 'Student name and parent name are required' });
+  const roomNumber = (req.body.roomNumber || '').trim();
+  if (!studentName || !parentName || !roomNumber) {
+    return res.status(400).json({ error: 'Student name, parent name, and room number are required' });
   }
 
-  recordCheckin(studentName, parentName);
-  return res.json({ success: true, studentName, parentName, timestamp: new Date().toISOString() });
+  const arrival = recordCheckin(studentName, parentName, roomNumber);
+  return res.json({ success: true, studentName, parentName, roomNumber, ...arrival });
 });
 
 app.get('/attendance', (req, res) => {
-  ensureAttendanceFile();
-  const csv = fs.readFileSync(csvFile, 'utf8');
-  const records = csv.split('\n').filter(Boolean).slice(1).map((line) => {
-    const match = line.match(/^"((?:[^"]|"")*)","((?:[^"]|"")*)","([^"]+)"$/);
-    if (!match) return null;
-    return {
-      studentName: match[1].replace(/""/g, '"'),
-      parentName: match[2].replace(/""/g, '"'),
-      timestamp: match[3],
-    };
-  }).filter(Boolean);
-  res.json(records);
+  res.json(readRecords());
 });
 
 app.post('/register', (req, res) => {
@@ -271,12 +311,28 @@ function readRecords() {
   const csv = fs.readFileSync(csvFile, 'utf8');
 
   return csv.split('\n').filter(Boolean).slice(1).map((line) => {
-    const match = line.match(/^"((?:[^"]|"")*)","((?:[^"]|"")*)","([^"]+)"$/);
-    if (!match) return null;
+    const values = parseCsvLine(line);
+    if (values.length === 3) {
+      const timestamp = values[2];
+      const date = timestamp ? new Date(timestamp) : null;
+      return {
+        studentName: values[0],
+        parentName: values[1],
+        roomNumber: '',
+        arrivalDate: date && !Number.isNaN(date.getTime()) ? formatArrivalDate(date) : '',
+        arrivalTime: date && !Number.isNaN(date.getTime()) ? formatArrivalTime(date) : '',
+        timestamp,
+      };
+    }
+
+    if (values.length < 6) return null;
     return {
-      studentName: match[1].replace(/""/g, '"'),
-      parentName: match[2].replace(/""/g, '"'),
-      timestamp: match[3],
+      studentName: values[0],
+      parentName: values[1],
+      roomNumber: values[2],
+      arrivalDate: values[3],
+      arrivalTime: values[4],
+      timestamp: values[5],
     };
   }).filter(Boolean);
 }
@@ -338,7 +394,10 @@ app.delete('/api/records', basicAuth, (req, res) => {
     return res.status(404).send('Record not found');
   }
 
-  const csvLines = ['StudentName,ParentName,Timestamp', ...remaining.map((record) => `"${record.studentName.replace(/"/g, '""')}","${record.parentName.replace(/"/g, '""')}","${record.timestamp}"`)];
+  const csvLines = [
+    'StudentName,ParentName,RoomNumber,ArrivalDate,ArrivalTime,Timestamp',
+    ...remaining.map((record) => `"${escapeCsv(record.studentName)}","${escapeCsv(record.parentName)}","${escapeCsv(record.roomNumber)}","${escapeCsv(record.arrivalDate)}","${escapeCsv(record.arrivalTime)}","${escapeCsv(record.timestamp)}"`),
+  ];
   fs.writeFileSync(csvFile, csvLines.join('\n') + '\n', 'utf8');
   res.json({ deleted: true });
 });

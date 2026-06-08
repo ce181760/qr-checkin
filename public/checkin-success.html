@@ -9,19 +9,21 @@
 <body>
   <main>
     <h1>Check-In Successful</h1>
-    <p id="successMessage">Thanks — your check-in was successful.</p>
+    <p id="successMessage">Thanks - your check-in was successful.</p>
     <a href="/">Back to check-in</a>
   </main>
   <script>
     const params = new URLSearchParams(window.location.search);
     const studentName = params.get('studentName');
     const parentName = params.get('parentName');
+    const roomNumber = params.get('roomNumber');
 
-    if (studentName || parentName) {
+    if (studentName || parentName || roomNumber) {
       const message = [];
       if (studentName) message.push(`Student: ${studentName}`);
       if (parentName) message.push(`Parent: ${parentName}`);
-      document.getElementById('successMessage').innerText = `Check-in successful! ${message.join(' · ')}`;
+      if (roomNumber) message.push(`Room: ${roomNumber}`);
+      document.getElementById('successMessage').innerText = `Check-in successful! ${message.join(' - ')}`;
     }
   </script>
 </body>
