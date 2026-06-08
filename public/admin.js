@@ -2,6 +2,7 @@ let authenticated = false;
 let authHeader = null;
 let currentRecords = [];
 let currentProfile = null;
+const ARRIVAL_TIME_ZONE = 'America/New_York';
 
 window.addEventListener('DOMContentLoaded', initAdmin);
 
@@ -237,7 +238,7 @@ function filterTable() {
 // EXPORT TO CSV
 function exportCSV() {
   const rows = document.querySelectorAll("#data tr");
-  let csv = "Name,Arrival Date,Arrival Time\n";
+  let csv = "Name,Arrival Date,Arrival Time (Orlando, FL)\n";
 
   rows.forEach(row => {
     if (row.style.display !== "none" && row.cells.length >= 3) {
@@ -265,10 +266,10 @@ function printPage() {
 
 function formatDate(timestamp) {
   const date = new Date(timestamp);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString();
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, { timeZone: ARRIVAL_TIME_ZONE });
 }
 
 function formatTime(timestamp) {
   const date = new Date(timestamp);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString();
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString(undefined, { timeZone: ARRIVAL_TIME_ZONE });
 }
