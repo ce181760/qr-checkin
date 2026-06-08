@@ -238,7 +238,7 @@ function filterTable() {
 // EXPORT TO CSV
 function exportCSV() {
   const rows = document.querySelectorAll("#data tr");
-  let csv = "Name,Arrival Date,Arrival Time (Orlando, FL)\n";
+  let csv = "Name,Arrival Date,Arrival Time\n";
 
   rows.forEach(row => {
     if (row.style.display !== "none" && row.cells.length >= 3) {
