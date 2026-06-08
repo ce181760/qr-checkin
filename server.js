@@ -38,7 +38,7 @@ function ensureUsersFile() {
 function ensureAttendanceFile() {
   ensureDir();
   if (!fs.existsSync(csvFile)) {
-    fs.writeFileSync(csvFile, 'StudentName,ParentName,RoomNumber,ArrivalDate,ArrivalTime,Timestamp\n', 'utf8');
+    fs.writeFileSync(csvFile, 'StudentName,ParentName,ArrivalDate,ArrivalTime,Timestamp\n', 'utf8');
   }
 }
 
@@ -107,13 +107,13 @@ function addUser(firstName, lastName, phone, email) {
   fs.appendFileSync(usersFile, line, 'utf8');
 }
 
-function recordCheckin(studentName, parentName, roomNumber) {
+function recordCheckin(studentName, parentName) {
   ensureAttendanceFile();
   const arrivedAt = new Date();
   const timestamp = arrivedAt.toISOString();
   const arrivalDate = formatArrivalDate(arrivedAt);
   const arrivalTime = formatArrivalTime(arrivedAt);
-  const line = `"${escapeCsv(studentName)}","${escapeCsv(parentName)}","${escapeCsv(roomNumber)}","${arrivalDate}","${arrivalTime}","${timestamp}"\n`;
+  const line = `"${escapeCsv(studentName)}","${escapeCsv(parentName)}","${arrivalDate}","${arrivalTime}","${timestamp}"\n`;
   fs.appendFileSync(csvFile, line, 'utf8');
   return { arrivalDate, arrivalTime, timestamp };
 }
@@ -139,13 +139,12 @@ function basicAuth(req, res, next) {
 app.post('/checkin', (req, res) => {
   const studentName = (req.body.studentName || '').trim();
   const parentName = (req.body.parentName || '').trim();
-  const roomNumber = (req.body.roomNumber || '').trim();
-  if (!studentName || !parentName || !roomNumber) {
-    return res.status(400).json({ error: 'Student name, parent name, and room number are required' });
+  if (!studentName || !parentName) {
+    return res.status(400).json({ error: 'Student name and parent name are required' });
   }
 
-  const arrival = recordCheckin(studentName, parentName, roomNumber);
-  return res.json({ success: true, studentName, parentName, roomNumber, ...arrival });
+  const arrival = recordCheckin(studentName, parentName);
+  return res.json({ success: true, studentName, parentName, ...arrival });
 });
 
 app.get('/attendance', (req, res) => {
@@ -318,10 +317,19 @@ function readRecords() {
       return {
         studentName: values[0],
         parentName: values[1],
-        roomNumber: '',
         arrivalDate: date && !Number.isNaN(date.getTime()) ? formatArrivalDate(date) : '',
         arrivalTime: date && !Number.isNaN(date.getTime()) ? formatArrivalTime(date) : '',
         timestamp,
+      };
+    }
+
+    if (values.length === 5) {
+      return {
+        studentName: values[0],
+        parentName: values[1],
+        arrivalDate: values[2],
+        arrivalTime: values[3],
+        timestamp: values[4],
       };
     }
 
@@ -329,7 +337,6 @@ function readRecords() {
     return {
       studentName: values[0],
       parentName: values[1],
-      roomNumber: values[2],
       arrivalDate: values[3],
       arrivalTime: values[4],
       timestamp: values[5],
@@ -395,8 +402,8 @@ app.delete('/api/records', basicAuth, (req, res) => {
   }
 
   const csvLines = [
-    'StudentName,ParentName,RoomNumber,ArrivalDate,ArrivalTime,Timestamp',
-    ...remaining.map((record) => `"${escapeCsv(record.studentName)}","${escapeCsv(record.parentName)}","${escapeCsv(record.roomNumber)}","${escapeCsv(record.arrivalDate)}","${escapeCsv(record.arrivalTime)}","${escapeCsv(record.timestamp)}"`),
+    'StudentName,ParentName,ArrivalDate,ArrivalTime,Timestamp',
+    ...remaining.map((record) => `"${escapeCsv(record.studentName)}","${escapeCsv(record.parentName)}","${escapeCsv(record.arrivalDate)}","${escapeCsv(record.arrivalTime)}","${escapeCsv(record.timestamp)}"`),
   ];
   fs.writeFileSync(csvFile, csvLines.join('\n') + '\n', 'utf8');
   res.json({ deleted: true });

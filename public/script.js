@@ -1,10 +1,9 @@
 function checkIn() {
   const studentName = document.getElementById("studentName").value.trim();
   const parentName = document.getElementById("parentName").value.trim();
-  const roomNumber = document.getElementById("roomNumber").value.trim();
 
-  if (studentName === "" || parentName === "" || roomNumber === "") {
-    alert("Enter student name, parent name, and room number");
+  if (studentName === "" || parentName === "") {
+    alert("Enter student name and parent name");
     return;
   }
 
@@ -15,8 +14,7 @@ function checkIn() {
     },
     body: JSON.stringify({
       studentName,
-      parentName,
-      roomNumber
+      parentName
     })
   })
   .then(async (response) => {
@@ -30,7 +28,6 @@ function checkIn() {
     const url = new URL('/checkin-success.html', window.location.origin);
     url.searchParams.set('studentName', studentName);
     url.searchParams.set('parentName', parentName);
-    url.searchParams.set('roomNumber', roomNumber);
     window.location.href = url.toString();
   })
   .catch((error) => {

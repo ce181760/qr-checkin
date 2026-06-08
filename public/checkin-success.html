@@ -16,13 +16,11 @@
     const params = new URLSearchParams(window.location.search);
     const studentName = params.get('studentName');
     const parentName = params.get('parentName');
-    const roomNumber = params.get('roomNumber');
 
-    if (studentName || parentName || roomNumber) {
+    if (studentName || parentName) {
       const message = [];
       if (studentName) message.push(`Student: ${studentName}`);
       if (parentName) message.push(`Parent: ${parentName}`);
-      if (roomNumber) message.push(`Room: ${roomNumber}`);
       document.getElementById('successMessage').innerText = `Check-in successful! ${message.join(' - ')}`;
     }
   </script>
