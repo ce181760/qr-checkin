@@ -169,7 +169,7 @@ function loadData() {
           <tr>
             <td>${escapeHtml(record.studentName)} / ${escapeHtml(record.parentName)}</td>
             <td>${escapeHtml(record.arrivalDate || formatDate(record.timestamp))}</td>
-            <td>${escapeHtml(record.arrivalTime || formatTime(record.timestamp))}</td>
+            <td>${escapeHtml(formatArrivalTime(record))}</td>
             <td><button type="button" onclick="deleteRecord(${index})">Delete</button></td>
           </tr>
         `;
@@ -271,5 +271,30 @@ function formatDate(timestamp) {
 
 function formatTime(timestamp) {
   const date = new Date(timestamp);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString(undefined, { timeZone: ARRIVAL_TIME_ZONE });
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString(undefined, {
+    timeZone: ARRIVAL_TIME_ZONE,
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatStoredTime(arrivalTime) {
+  const match = String(arrivalTime || '').match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) {
+    return arrivalTime || '';
+  }
+
+  const hours = Number(match[1]);
+  const minutes = match[2];
+  if (Number.isNaN(hours) || hours < 0 || hours > 23) {
+    return arrivalTime;
+  }
+
+  const period = hours >= 12 ? 'PM' : 'AM';
+  const displayHours = hours % 12 || 12;
+  return `${displayHours}:${minutes} ${period}`;
+}
+
+function formatArrivalTime(record) {
+  return formatStoredTime(record.arrivalTime) || formatTime(record.timestamp);
 }

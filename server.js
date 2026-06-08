@@ -85,15 +85,12 @@ function formatArrivalDate(date) {
 }
 
 function formatArrivalTime(date) {
-  const parts = new Intl.DateTimeFormat('en-US', {
+  return new Intl.DateTimeFormat('en-US', {
     timeZone: ARRIVAL_TIME_ZONE,
-    hour: '2-digit',
+    hour: 'numeric',
     minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.hour}:${values.minute}:${values.second}`;
+    hour12: true,
+  }).format(date);
 }
 
 function userExists(firstName, lastName) {
