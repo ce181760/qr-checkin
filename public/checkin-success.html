@@ -36,12 +36,12 @@
     }
 
     if (studentName || parentName || arrivalTime) {
-      const message = [];
+      const message = ['Check-in successful!'];
       if (studentName) message.push(`Student: ${studentName}`);
       if (parentName) message.push(`Parent: ${parentName}`);
       if (arrivalTime) message.push(`Arrival time: ${formatArrivalTime(arrivalTime)}`);
-      message.push('On time');
-      document.getElementById('successMessage').innerText = `Check-in successful! ${message.join(' - ')}`;
+      message.push('Your On time');
+      document.getElementById('successMessage').innerText = message.join('\n');
     }
   </script>
 </body>
