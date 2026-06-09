@@ -2,15 +2,18 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const nodemailer = require('nodemailer');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const csvFile = path.join(__dirname, 'data', 'attendance.csv');
-const usersFile = path.join(__dirname, 'data', 'users.csv');
-const adminFile = path.join(__dirname, 'data', 'admin.json');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const csvFile = path.join(DATA_DIR, 'attendance.csv');
+const usersFile = path.join(DATA_DIR, 'users.csv');
+const adminFile = path.join(DATA_DIR, 'admin.json');
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'admin123';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@example.com';
+const DATABASE_URL = process.env.DATABASE_URL || '';
 const SMTP_HOST = process.env.SMTP_HOST || '';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT, 10) || 587;
 const SMTP_USER = process.env.SMTP_USER || '';
@@ -18,14 +21,19 @@ const SMTP_PASS = process.env.SMTP_PASS || '';
 const SMTP_FROM = process.env.SMTP_FROM || `no-reply@${process.env.SMTP_HOST || 'localhost'}`;
 const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
 const ARRIVAL_TIME_ZONE = 'America/New_York';
+const dbPool = DATABASE_URL ? new Pool({
+  connectionString: DATABASE_URL,
+  ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
+}) : null;
+let adminTableReady = false;
 
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 function ensureDir() {
-  if (!fs.existsSync(path.dirname(usersFile))) {
-    fs.mkdirSync(path.dirname(usersFile), { recursive: true });
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 }
 
@@ -123,7 +131,7 @@ function recordCheckin(studentName, parentName) {
   return { arrivalDate, arrivalTime, timestamp };
 }
 
-function basicAuth(req, res, next) {
+async function basicAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Basic ')) {
     res.set('WWW-Authenticate', 'Basic realm="Admin Area"');
@@ -132,7 +140,7 @@ function basicAuth(req, res, next) {
 
   const credentials = Buffer.from(authHeader.slice(6), 'base64').toString('utf8');
   const [user, pass] = credentials.split(':');
-  const profile = readAdminProfile();
+  const profile = await readAdminProfile();
 
   if (user === profile.username && pass === profile.password) {
     return next();
@@ -177,45 +185,98 @@ app.get('/admin/account', (req, res) => {
 function ensureAdminFile() {
   ensureDir();
   if (!fs.existsSync(adminFile)) {
-    const defaultProfile = {
-      username: ADMIN_USER,
-      password: ADMIN_PASS,
-      email: ADMIN_EMAIL,
-      lastPasswordChange: new Date().toISOString(),
-      lastReminderSent: null,
-    };
+    const defaultProfile = getDefaultAdminProfile();
     fs.writeFileSync(adminFile, JSON.stringify(defaultProfile, null, 2) + '\n', 'utf8');
   }
 }
 
-function readAdminProfile() {
+function getDefaultAdminProfile() {
+  return {
+    username: ADMIN_USER,
+    password: ADMIN_PASS,
+    email: ADMIN_EMAIL,
+    lastPasswordChange: new Date().toISOString(),
+    lastReminderSent: null,
+  };
+}
+
+function normalizeAdminProfile(profile) {
+  return {
+    username: profile.username || ADMIN_USER,
+    password: profile.password || ADMIN_PASS,
+    email: profile.email || ADMIN_EMAIL,
+    lastPasswordChange: profile.lastPasswordChange || profile.last_password_change || profile.lastPasswordReminder || new Date().toISOString(),
+    lastReminderSent: profile.lastReminderSent || profile.last_reminder_sent || profile.lastPasswordReminder || null,
+  };
+}
+
+async function ensureAdminTable() {
+  if (!dbPool || adminTableReady) {
+    return;
+  }
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS admin_profile (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      username TEXT NOT NULL,
+      password TEXT NOT NULL,
+      email TEXT NOT NULL,
+      last_password_change TIMESTAMPTZ NOT NULL,
+      last_reminder_sent TIMESTAMPTZ
+    )
+  `);
+  adminTableReady = true;
+}
+
+async function readAdminProfile() {
+  if (dbPool) {
+    await ensureAdminTable();
+    const result = await dbPool.query('SELECT * FROM admin_profile WHERE id = 1');
+    if (result.rows.length) {
+      return normalizeAdminProfile(result.rows[0]);
+    }
+
+    const defaultProfile = getDefaultAdminProfile();
+    await writeAdminProfile(defaultProfile);
+    return defaultProfile;
+  }
+
   ensureAdminFile();
 
   try {
     const json = fs.readFileSync(adminFile, 'utf8');
     const profile = JSON.parse(json);
 
-    return {
-      username: profile.username || ADMIN_USER,
-      password: profile.password || ADMIN_PASS,
-      email: profile.email || ADMIN_EMAIL,
-      lastPasswordChange: profile.lastPasswordChange || profile.lastPasswordReminder || new Date().toISOString(),
-      lastReminderSent: profile.lastReminderSent || profile.lastPasswordReminder || null,
-    };
+    return normalizeAdminProfile(profile);
   } catch (error) {
-    const defaultProfile = {
-      username: ADMIN_USER,
-      password: ADMIN_PASS,
-      email: ADMIN_EMAIL,
-      lastPasswordChange: new Date().toISOString(),
-      lastReminderSent: null,
-    };
+    const defaultProfile = getDefaultAdminProfile();
     fs.writeFileSync(adminFile, JSON.stringify(defaultProfile, null, 2) + '\n', 'utf8');
     return defaultProfile;
   }
 }
 
-function writeAdminProfile(profile) {
+async function writeAdminProfile(profile) {
+  if (dbPool) {
+    await ensureAdminTable();
+    await dbPool.query(`
+      INSERT INTO admin_profile (id, username, password, email, last_password_change, last_reminder_sent)
+      VALUES (1, $1, $2, $3, $4, $5)
+      ON CONFLICT (id) DO UPDATE SET
+        username = EXCLUDED.username,
+        password = EXCLUDED.password,
+        email = EXCLUDED.email,
+        last_password_change = EXCLUDED.last_password_change,
+        last_reminder_sent = EXCLUDED.last_reminder_sent
+    `, [
+      profile.username,
+      profile.password,
+      profile.email,
+      profile.lastPasswordChange || new Date().toISOString(),
+      profile.lastReminderSent || null,
+    ]);
+    return;
+  }
+
   ensureAdminFile();
   fs.writeFileSync(adminFile, JSON.stringify(profile, null, 2) + '\n', 'utf8');
 }
@@ -276,7 +337,7 @@ async function sendPasswordReminder(profile) {
 }
 
 async function checkAndSendPasswordReminder() {
-  const profile = readAdminProfile();
+  const profile = await readAdminProfile();
   const reminderDue = isReminderDue(profile);
 
   if (!reminderDue) {
@@ -287,7 +348,7 @@ async function checkAndSendPasswordReminder() {
     const sent = await sendPasswordReminder(profile);
     if (sent) {
       profile.lastReminderSent = new Date().toISOString();
-      writeAdminProfile(profile);
+      await writeAdminProfile(profile);
       console.log(`Password reminder sent to ${profile.email}`);
     }
   } catch (error) {
@@ -349,13 +410,13 @@ function readRecords() {
   }).filter(Boolean);
 }
 
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password are required' });
   }
 
-  const profile = readAdminProfile();
+  const profile = await readAdminProfile();
   if (username === profile.username && password === profile.password) {
     return res.json({ username: profile.username, email: profile.email, passwordChangeRequired: isPasswordChangeRequired(profile) });
   }
@@ -363,18 +424,18 @@ app.post('/api/admin/login', (req, res) => {
   return res.status(403).json({ error: 'Invalid username or password' });
 });
 
-app.get('/api/admin/profile', basicAuth, (req, res) => {
-  const profile = readAdminProfile();
+app.get('/api/admin/profile', basicAuth, async (req, res) => {
+  const profile = await readAdminProfile();
   res.json({ username: profile.username, email: profile.email, passwordChangeRequired: isPasswordChangeRequired(profile) });
 });
 
-app.post('/api/admin/profile', basicAuth, (req, res) => {
+app.post('/api/admin/profile', basicAuth, async (req, res) => {
   const { username, password, email } = req.body;
   if (!username || !password || !email) {
     return res.status(400).json({ error: 'Username, password, and email are required' });
   }
 
-  const currentProfile = readAdminProfile();
+  const currentProfile = await readAdminProfile();
   if (password === currentProfile.password) {
     return res.status(400).json({ error: 'New password must be different from the current password' });
   }
@@ -386,7 +447,7 @@ app.post('/api/admin/profile', basicAuth, (req, res) => {
     lastPasswordChange: new Date().toISOString(),
     lastReminderSent: currentProfile.lastReminderSent || null,
   };
-  writeAdminProfile(profile);
+  await writeAdminProfile(profile);
   return res.json({ username: profile.username, email: profile.email, passwordChangeRequired: false });
 });
 
@@ -415,10 +476,11 @@ app.delete('/api/records', basicAuth, (req, res) => {
 });
 
 app.listen(PORT, async () => {
+  const profile = await readAdminProfile();
   console.log(`Event check-in app running at http://localhost:${PORT}`);
   console.log(`Admin page: http://localhost:${PORT}/admin`);
-  console.log(`Username: ${ADMIN_USER}`);
-  console.log(`Password: ${ADMIN_PASS}`);
+  console.log(`Admin username: ${profile.username}`);
+  console.log(`Admin storage: ${dbPool ? 'database' : adminFile}`);
 
   await checkAndSendPasswordReminder();
   setInterval(checkAndSendPasswordReminder, 24 * 60 * 60 * 1000);
