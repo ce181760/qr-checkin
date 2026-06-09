@@ -62,6 +62,12 @@ Environment example
 
 Copy `.env.example` to `.env` or set the variables in your environment. Use `data/admin.example.json` as a template and do not commit your real `data/admin.json` file.
 
+Persistent data on Render
+- Render's normal filesystem can reset on redeploys/restarts. To keep admin changes and CSV data, add a Render persistent disk and set `DATA_DIR` to the disk mount path, such as `/var/data`.
+- With `DATA_DIR=/var/data`, the app stores `attendance.csv`, `users.csv`, and `admin.json` on the persistent disk instead of the project folder.
+- To store admin username/password/email and check-in records in a database, add a Render Postgres database and set `DATABASE_URL`. When `DATABASE_URL` is present, admin profile changes and attendance records are saved in Postgres. `DATA_DIR` is still used for other local files such as `users.csv`.
+- If your database requires SSL, set `DATABASE_SSL=true`.
+
 Security notes
 - The app currently stores the admin password in `data/admin.json`. This is convenient for a quick demo but insecure for production — consider enabling password hashing (bcrypt) and switching to server sessions or tokens.
 - The server does not return admin passwords to the client; only safe profile fields are returned.
