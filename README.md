@@ -2,100 +2,316 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A tiny, easy-to-run attendee check-in web app. It collects a visitor's name and records a timestamp, and includes a simple admin interface to search, delete, and export attendance.
+A lightweight student attendance app for event drop-off and pick-up. Parents use the public page to record drop-off or pick-up, and staff use the admin dashboard to review attendance, late labels, reports, and account settings.
 
 [Repository](https://github.com/ce181760/qr-checkin)
 
-Purpose
-- Fast check-in for small events using a QR code or direct link.
-- Minimal data collected: attendee name + timestamp.
+## What The App Does
 
-Quick start (5 minutes)
-1. Open a terminal in the project folder (`Documents/event-checkin`).
-2. Install dependencies:
+- Lets parents choose `Drop off` or `Pick up`.
+- Keeps one attendance session per student per event date.
+- Records separate drop-off and pick-up parent names, times, and timestamps.
+- Shows whether a student is currently `Present` or `Picked up`.
+- Lets admins set late cutoff times for drop-off and pick-up.
+- Marks late actions with `Late Drop-off` and `Late Pick-up` labels.
+- Requires a late reason only when a parent is late.
+- Keeps late reasons out of the main dashboard table.
+- Includes late reasons in Print / Save PDF reports.
+- Emails late reasons to the admin when SMTP is configured.
+- Shows the school logo on the check-in, success, admin login, dashboard, and account pages.
 
-```bash
+## Parent Flow
+
+Parents open the public check-in page:
+
+```text
+http://localhost:3000
+```
+
+They choose one action:
+
+- `Drop off`
+- `Pick up`
+
+Then they enter:
+
+- Student name
+- Parent name
+
+If the action is on time, the app saves the attendance update and shows the confirmation page.
+
+If the action is late, the app asks for a required reason before saving:
+
+```text
+This drop-off is marked late. Please enter a reason.
+```
+
+or:
+
+```text
+This pick-up is marked late. Please enter a reason.
+```
+
+The confirmation page shows:
+
+- Student
+- Parent
+- Action time
+- `Late` or `On time`
+
+## Admin Flow
+
+Staff open the admin dashboard:
+
+```text
+http://localhost:3000/admin
+```
+
+The dashboard shows:
+
+- Student
+- Current status
+- Late labels
+- Event date
+- Drop-off details
+- Pick-up details
+- Delete action
+
+The dashboard table intentionally does not show full late reasons, so the table stays easy to scan.
+
+## Late Cutoff Times
+
+Admins can set:
+
+- `Late drop-off at or after`
+- `Late pick-up at or after`
+
+Default values:
+
+```text
+Late drop-off at or after: 08:36
+Late pick-up at or after: 13:35
+```
+
+If a parent submits at or after the cutoff, the action is marked late.
+
+Examples:
+
+- Drop-off at `8:36 AM` with cutoff `8:36 AM` is `Late`.
+- Pick-up at `1:35 PM` with cutoff `1:35 PM` is `Late`.
+- Pick-up before the late pick-up cutoff is allowed and is not marked late.
+
+## Late Reasons
+
+Late reasons are stored separately:
+
+- `dropOffLateReason`
+- `pickUpLateReason`
+
+A student can have:
+
+- No late reasons
+- A late drop-off reason
+- A late pick-up reason
+- Both late drop-off and late pick-up reasons
+
+Late reasons appear in the Print / Save PDF output. They do not appear in the main dashboard table.
+
+If SMTP is configured, the app also emails the admin when a late reason is submitted.
+
+## Print / Save PDF
+
+From the admin dashboard, use:
+
+```text
+Print / Save PDF
+```
+
+The printed report includes the attendance table and a late reasons section when late reasons exist.
+
+## Admin Account
+
+Admins can manage their account at:
+
+```text
+http://localhost:3000/admin/account
+```
+
+The account page supports:
+
+- Username changes
+- Email changes
+- Password changes
+
+Default local admin:
+
+```text
+Username: admin
+Password: admin123
+```
+
+## Quick Start
+
+Open PowerShell in the project folder:
+
+```powershell
+cd C:\Users\Cesar\Documents\event-checkin\qr-checkin
+```
+
+Install dependencies:
+
+```powershell
 npm install
 ```
 
-3. Start the server:
-
-```bash
-npm start
-```
-
-4. Open the attendee page in your browser:
-
-http://localhost:3000
-
-5. Open the admin dashboard (staff only):
-
-http://localhost:3000/admin
-
-What you'll find
-- Attendee form (`/`) — simple name input intended for QR placement.
-- Admin dashboard (`/admin`) — view, search, delete, and export attendance.
-- Admin account page (`/admin/account`) — change username, email, and password.
-
-Files of interest
-- `server.js` — Express server, API endpoints, and reminder scheduler.
-- `public/` — static frontend files (attendee form, admin UI, scripts).
-- `data/attendance.csv` — stored attendance records.
-- `data/admin.json` — admin profile and reminder timestamps (DO NOT commit).
-- `data/admin.example.json` — example admin file to copy to `data/admin.json` for local use.
-- `.env.example` — example environment variables for admin overrides and SMTP settings.
-
-Admin access
-- Default admin (used for local testing):
-	- Username: admin
-	- Password: admin123
-
-To override before starting the server (Windows PowerShell):
+Start the server:
 
 ```powershell
-$env:ADMIN_USER = 'myuser'
-$env:ADMIN_PASS = 'mypassword'
 npm start
 ```
 
-Environment example
+Open:
 
-Copy `.env.example` to `.env` or set the variables in your environment. Use `data/admin.example.json` as a template and do not commit your real `data/admin.json` file.
-
-Persistent data on Render
-- Render's normal filesystem can reset on redeploys/restarts. To keep admin changes and CSV data, add a Render persistent disk and set `DATA_DIR` to the disk mount path, such as `/var/data`.
-- With `DATA_DIR=/var/data`, the app stores `attendance.csv`, `users.csv`, and `admin.json` on the persistent disk instead of the project folder.
-- To store admin username/password/email and check-in records in a database, add a Render Postgres database and set `DATABASE_URL`. When `DATABASE_URL` is present, admin profile changes and attendance records are saved in Postgres. `DATA_DIR` is still used for other local files such as `users.csv`.
-- If your database requires SSL, set `DATABASE_SSL=true`.
-
-Security notes
-- The app currently stores the admin password in `data/admin.json`. This is convenient for a quick demo but insecure for production — consider enabling password hashing (bcrypt) and switching to server sessions or tokens.
-- The server does not return admin passwords to the client; only safe profile fields are returned.
-
-Email reminders
-- The server can send monthly password reminder emails to the admin. To enable real email sending, set SMTP environment variables before starting the app (see `server.js` for variable names). If SMTP is not configured, reminders are skipped or logged.
-
-Development notes
-- Port: default is `3000` (change in `server.js` if needed).
-- Install new dependencies with `npm install <package>` and restart the server.
-- To run the server manually for debugging:
-
-```bash
-node server.js
+```text
+http://localhost:3000
 ```
 
-Data and backups
-- `data/attendance.csv` is a plain CSV. Back it up before bulk edits.
-- `data/admin.json` holds admin profile info and reminder timestamps.
+## Files Of Interest
 
-Next improvements (recommended)
-- Hash admin passwords (bcrypt) and remove plaintext storage.
-- Replace client-stored Basic auth with server sessions or JWTs.
-- Add password strength validation and rate-limiting on login.
+- `server.js`: Express server, attendance APIs, admin APIs, storage, email, and reminder logic.
+- `public/index.html`: Parent drop-off and pick-up form.
+- `public/script.js`: Parent form behavior, late-reason prompt, and success redirect.
+- `public/checkin-success.html`: Confirmation page.
+- `public/admin.html`: Admin dashboard markup.
+- `public/admin.js`: Admin dashboard behavior, settings, export, print report.
+- `public/admin-account.html`: Admin account page.
+- `public/styles.css`: Shared styling.
+- `public/school-logo.jpeg`: School logo used across the app.
+- `data/attendance.csv`: Local CSV attendance storage.
+- `data/admin.json`: Local admin profile and settings storage. Do not commit real production data.
 
-Questions or help
-- If you want, I can implement password hashing and update login/profile flows — ask me to proceed.
+## Persistent Data On Render
+
+Render's normal filesystem can reset on redeploys and restarts. This app supports persistent storage.
+
+Recommended Render persistent disk setup:
+
+```text
+DATA_DIR=/var/data
+```
+
+With that setting, the app stores:
+
+```text
+/var/data/attendance.csv
+/var/data/admin.json
+/var/data/users.csv
+```
+
+That preserves:
+
+- Attendance records
+- Drop-off and pick-up records
+- Late reasons
+- Late cutoff settings
+- Admin account changes
+
+The app also supports Postgres:
+
+```text
+DATABASE_URL=...
+DATABASE_SSL=true
+```
+
+When `DATABASE_URL` is set, admin profile changes and attendance records are stored in Postgres. `DATA_DIR` is still used for local files such as `users.csv`.
+
+## Environment Variables
+
+Copy `.env.example` to `.env` for local development, or set the variables in Render.
+
+Common settings:
+
+```text
+ADMIN_USER=admin
+ADMIN_PASS=admin123
+ADMIN_EMAIL=admin@example.com
+DATA_DIR=/var/data
+DATABASE_URL=
+DATABASE_SSL=false
+```
+
+SMTP settings for email reminders and late reason emails:
+
+```text
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=your-smtp-user
+SMTP_PASS=your-smtp-pass
+SMTP_FROM=Event Check-In <noreply@example.com>
+SMTP_SECURE=false
+```
+
+If SMTP is not configured, attendance still works. The app logs that email was skipped.
+
+## Data Format
+
+CSV attendance records include:
+
+- Student name
+- Event date
+- Drop-off parent name
+- Drop-off time
+- Drop-off timestamp
+- Drop-off late reason
+- Pick-up parent name
+- Pick-up time
+- Pick-up timestamp
+- Pick-up late reason
+
+Older CSV formats are still read and normalized by the server.
+
+## Validation Commands
+
+Use these checks after code changes:
+
+```powershell
+node --check server.js
+node --check public\script.js
+node --check public\admin.js
+```
+
+## Security Notes
+
+- Local/demo admin passwords are stored in `admin.json`.
+- For production, consider adding password hashing with bcrypt.
+- Consider replacing client-stored Basic auth with server sessions or JWTs.
+- Keep real `data/admin.json` and `data/attendance.csv` out of Git.
+
+## Backup Notes
+
+If using `DATA_DIR=/var/data`, back up the persistent disk data before bulk edits.
+
+Important files:
+
+```text
+/var/data/attendance.csv
+/var/data/admin.json
+```
+
+## Recent Feature Summary
+
+This update added:
+
+- Drop-off and pick-up actions
+- One attendance session per student per event date
+- Late cutoff settings
+- Late labels
+- Required late reasons
+- Print / Save PDF late reason report
+- Optional late reason admin emails
+- Logo branding across pages
+- Persistent storage compatibility for the new fields
 
 ---
 
-Thank you for using Event Check-In — built for quick, private check-ins.
+Thank you for using Event Check-In.
