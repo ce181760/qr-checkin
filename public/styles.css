@@ -36,6 +36,10 @@ h1 {
   height: auto;
 }
 
+#successMessage {
+  white-space: pre-line;
+}
+
 form,
 .toolbar {
   display: grid;

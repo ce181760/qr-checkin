@@ -24,10 +24,13 @@ function checkIn() {
     }
     return response.json();
   })
-  .then(() => {
+  .then((checkin) => {
     const url = new URL('/checkin-success.html', window.location.origin);
     url.searchParams.set('studentName', studentName);
     url.searchParams.set('parentName', parentName);
+    if (checkin.arrivalTime) {
+      url.searchParams.set('arrivalTime', checkin.arrivalTime);
+    }
     window.location.href = url.toString();
   })
   .catch((error) => {
