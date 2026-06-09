@@ -26,9 +26,11 @@
 
     <!-- DASHBOARD (hidden until login) -->
     <div id="dashboard" style="display: none;">
-      <img class="site-logo site-logo-dashboard" src="/school-logo.jpeg" alt="School logo" />
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-        <h1>Attendance Dashboard</h1>
+        <div style="display: flex; align-items: center; gap: 1rem;">
+          <img class="admin-logo" src="/school-logo.jpeg" alt="School logo" />
+          <h1>Attendance Dashboard</h1>
+        </div>
         <div>
           <span id="userName" style="margin-right: 1rem; color: #666;"></span>
           <button type="button" id="logoutBtn" onclick="logout()">Logout</button>
