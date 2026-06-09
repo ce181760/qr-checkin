@@ -21,6 +21,8 @@ const SMTP_PASS = process.env.SMTP_PASS || '';
 const SMTP_FROM = process.env.SMTP_FROM || `no-reply@${process.env.SMTP_HOST || 'localhost'}`;
 const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
 const ARRIVAL_TIME_ZONE = 'America/New_York';
+const DEFAULT_LATE_DROP_OFF_AFTER = '08:36';
+const DEFAULT_LATE_PICK_UP_AFTER = '13:35';
 const dbPool = DATABASE_URL ? new Pool({
   connectionString: DATABASE_URL,
   ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
@@ -48,7 +50,7 @@ function ensureUsersFile() {
 function ensureAttendanceFile() {
   ensureDir();
   if (!fs.existsSync(csvFile)) {
-    fs.writeFileSync(csvFile, 'StudentName,ParentName,ArrivalDate,ArrivalTime,Timestamp\n', 'utf8');
+    fs.writeFileSync(csvFile, 'StudentName,EventDate,DropOffParentName,DropOffTime,DropOffTimestamp,DropOffLateReason,PickUpParentName,PickUpTime,PickUpTimestamp,PickUpLateReason\n', 'utf8');
   }
 }
 
@@ -102,6 +104,78 @@ function formatArrivalTime(date) {
   }).format(date);
 }
 
+function isValidTimeValue(value) {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
+}
+
+function normalizeScheduleSettings(settings = {}) {
+  const lateDropOffAfter = isValidTimeValue(settings.lateDropOffAfter || settings.late_drop_off_after)
+    ? (settings.lateDropOffAfter || settings.late_drop_off_after)
+    : DEFAULT_LATE_DROP_OFF_AFTER;
+  const latePickUpAfter = isValidTimeValue(settings.latePickUpAfter || settings.late_pick_up_after)
+    ? (settings.latePickUpAfter || settings.late_pick_up_after)
+    : DEFAULT_LATE_PICK_UP_AFTER;
+
+  return { lateDropOffAfter, latePickUpAfter };
+}
+
+function timeToMinutes(value) {
+  if (!isValidTimeValue(value)) {
+    return null;
+  }
+
+  const [hours, minutes] = value.split(':').map(Number);
+  return (hours * 60) + minutes;
+}
+
+function timestampToLocalMinutes(timestamp) {
+  const date = timestamp ? new Date(timestamp) : null;
+  if (!date || Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: ARRIVAL_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return (Number(values.hour) * 60) + Number(values.minute);
+}
+
+function getTimingFlags(record, scheduleSettings) {
+  const settings = normalizeScheduleSettings(scheduleSettings);
+  const flags = [];
+  const dropOffMinutes = timestampToLocalMinutes(record.dropOffTimestamp || record.timestamp);
+  const pickUpMinutes = timestampToLocalMinutes(record.pickUpTimestamp);
+  const lateDropOffMinutes = timeToMinutes(settings.lateDropOffAfter);
+  const latePickUpMinutes = timeToMinutes(settings.latePickUpAfter);
+
+  if (dropOffMinutes !== null && lateDropOffMinutes !== null && dropOffMinutes >= lateDropOffMinutes) {
+    flags.push('Late Drop-off');
+  }
+
+  if (pickUpMinutes !== null && latePickUpMinutes !== null && pickUpMinutes >= latePickUpMinutes) {
+    flags.push('Late Pick-up');
+  }
+
+  return flags;
+}
+
+function getActionTimingStatus(action, timestamp, scheduleSettings) {
+  const settings = normalizeScheduleSettings(scheduleSettings);
+  const actionMinutes = timestampToLocalMinutes(timestamp);
+  const cutoff = action === 'pick_up' ? settings.latePickUpAfter : settings.lateDropOffAfter;
+  const cutoffMinutes = timeToMinutes(cutoff);
+
+  if (actionMinutes !== null && cutoffMinutes !== null && actionMinutes >= cutoffMinutes) {
+    return 'Late';
+  }
+
+  return 'On time';
+}
+
 function userExists(firstName, lastName) {
   ensureUsersFile();
   const csv = fs.readFileSync(usersFile, 'utf8');
@@ -136,28 +210,228 @@ async function ensureAttendanceTable() {
       timestamp TIMESTAMPTZ NOT NULL
     )
   `);
+  await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS event_date TEXT');
+  await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS drop_off_parent_name TEXT');
+  await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS drop_off_time TEXT');
+  await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS drop_off_timestamp TIMESTAMPTZ');
+  await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS pick_up_parent_name TEXT');
+  await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS pick_up_time TEXT');
+  await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS pick_up_timestamp TIMESTAMPTZ');
+  await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS drop_off_late_reason TEXT');
+  await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS pick_up_late_reason TEXT');
   attendanceTableReady = true;
 }
 
-async function recordCheckin(studentName, parentName) {
-  const arrivedAt = new Date();
-  const timestamp = arrivedAt.toISOString();
-  const arrivalDate = formatArrivalDate(arrivedAt);
-  const arrivalTime = formatArrivalTime(arrivedAt);
+function normalizeAction(action) {
+  return action === 'pick_up' ? 'pick_up' : 'drop_off';
+}
+
+function getSessionStatus(record) {
+  if (record.pickUpTimestamp) {
+    return 'Picked up';
+  }
+
+  if (record.dropOffTimestamp || record.timestamp) {
+    return 'Present';
+  }
+
+  return 'Not arrived';
+}
+
+function normalizeRecord(record) {
+  const dropOffTimestamp = record.dropOffTimestamp || record.timestamp || '';
+  const dropOffDate = dropOffTimestamp ? new Date(dropOffTimestamp) : null;
+  const eventDate = record.eventDate || record.arrivalDate || (dropOffDate && !Number.isNaN(dropOffDate.getTime()) ? formatArrivalDate(dropOffDate) : '');
+  const dropOffTime = record.dropOffTime || record.arrivalTime || (dropOffDate && !Number.isNaN(dropOffDate.getTime()) ? formatArrivalTime(dropOffDate) : '');
+  const dropOffParentName = record.dropOffParentName || record.parentName || '';
+
+  const normalized = {
+    studentName: record.studentName || '',
+    eventDate,
+    dropOffParentName,
+    dropOffTime,
+    dropOffTimestamp,
+    dropOffLateReason: record.dropOffLateReason || '',
+    pickUpParentName: record.pickUpParentName || '',
+    pickUpTime: record.pickUpTime || '',
+    pickUpTimestamp: record.pickUpTimestamp || '',
+    pickUpLateReason: record.pickUpLateReason || '',
+  };
+
+  return {
+    ...normalized,
+    parentName: normalized.dropOffParentName,
+    arrivalDate: normalized.eventDate,
+    arrivalTime: normalized.dropOffTime,
+    timestamp: normalized.dropOffTimestamp,
+    status: getSessionStatus(normalized),
+  };
+}
+
+function findSessionIndex(records, studentName, eventDate) {
+  const normalizedStudentName = studentName.toLowerCase();
+  return records.findIndex((record) => (
+    record.studentName.toLowerCase() === normalizedStudentName
+    && record.eventDate === eventDate
+  ));
+}
+
+async function recordAttendanceAction(studentName, parentName, action, lateReason = '') {
+  const attendanceAction = normalizeAction(action);
+  const actionAt = new Date();
+  const timestamp = actionAt.toISOString();
+  const eventDate = formatArrivalDate(actionAt);
+  const actionTime = formatArrivalTime(actionAt);
+  const profile = await readAdminProfile();
+  const timingStatus = getActionTimingStatus(attendanceAction, timestamp, profile.scheduleSettings);
+  const trimmedLateReason = String(lateReason || '').trim();
+
+  if (timingStatus === 'Late' && !trimmedLateReason) {
+    const actionLabel = attendanceAction === 'pick_up' ? 'pick-up' : 'drop-off';
+    const error = new Error(`Please enter a reason for the late ${actionLabel}.`);
+    error.requiresLateReason = true;
+    error.timingStatus = timingStatus;
+    error.action = attendanceAction;
+    error.actionTime = actionTime;
+    throw error;
+  }
 
   if (dbPool) {
     await ensureAttendanceTable();
-    await dbPool.query(`
-      INSERT INTO attendance_records (student_name, parent_name, arrival_date, arrival_time, timestamp)
-      VALUES ($1, $2, $3, $4, $5)
-    `, [studentName, parentName, arrivalDate, arrivalTime, timestamp]);
-    return { arrivalDate, arrivalTime, timestamp };
+    const existing = await dbPool.query(`
+      SELECT id,
+        COALESCE(drop_off_timestamp, timestamp) AS drop_off_timestamp,
+        pick_up_timestamp
+      FROM attendance_records
+      WHERE LOWER(student_name) = LOWER($1)
+        AND COALESCE(event_date, arrival_date) = $2
+      ORDER BY id ASC
+      LIMIT 1
+    `, [studentName, eventDate]);
+
+    if (attendanceAction === 'drop_off') {
+      if (existing.rows[0]?.drop_off_timestamp) {
+        throw new Error('This student has already been dropped off today.');
+      }
+
+      if (existing.rows.length) {
+        await dbPool.query(`
+          UPDATE attendance_records
+          SET parent_name = $1,
+              arrival_date = $2,
+              arrival_time = $3,
+              timestamp = $4,
+              event_date = $2,
+              drop_off_parent_name = $1,
+              drop_off_time = $3,
+              drop_off_timestamp = $4,
+              drop_off_late_reason = $5
+          WHERE id = $6
+        `, [parentName, eventDate, actionTime, timestamp, trimmedLateReason, existing.rows[0].id]);
+      } else {
+        await dbPool.query(`
+          INSERT INTO attendance_records (
+            student_name, parent_name, arrival_date, arrival_time, timestamp,
+            event_date, drop_off_parent_name, drop_off_time, drop_off_timestamp,
+            drop_off_late_reason
+          )
+          VALUES ($1, $2, $3, $4, $5, $3, $2, $4, $5, $6)
+        `, [studentName, parentName, eventDate, actionTime, timestamp, trimmedLateReason]);
+      }
+    } else {
+      if (!existing.rows.length || !existing.rows[0].drop_off_timestamp) {
+        throw new Error('This student must be dropped off before they can be picked up.');
+      }
+
+      if (existing.rows[0].pick_up_timestamp) {
+        throw new Error('This student has already been picked up today.');
+      }
+
+      await dbPool.query(`
+        UPDATE attendance_records
+        SET event_date = COALESCE(event_date, arrival_date),
+            pick_up_parent_name = $1,
+            pick_up_time = $2,
+            pick_up_timestamp = $3,
+            pick_up_late_reason = $4
+        WHERE id = $5
+      `, [parentName, actionTime, timestamp, trimmedLateReason, existing.rows[0].id]);
+    }
+
+    if (timingStatus === 'Late') {
+      await trySendLateAttendanceEmail({
+        studentName,
+        parentName,
+        action: attendanceAction,
+        actionTime,
+        eventDate,
+        lateReason: trimmedLateReason,
+        profile,
+      });
+    }
+
+    return { action: attendanceAction, eventDate, actionTime, timestamp, timingStatus };
   }
 
   ensureAttendanceFile();
-  const line = `"${escapeCsv(studentName)}","${escapeCsv(parentName)}","${arrivalDate}","${arrivalTime}","${timestamp}"\n`;
-  fs.appendFileSync(csvFile, line, 'utf8');
-  return { arrivalDate, arrivalTime, timestamp };
+  const records = await readRecords();
+  const sessionIndex = findSessionIndex(records, studentName, eventDate);
+  const session = sessionIndex >= 0 ? records[sessionIndex] : null;
+
+  if (attendanceAction === 'drop_off') {
+    if (session?.dropOffTimestamp) {
+      throw new Error('This student has already been dropped off today.');
+    }
+
+    const nextSession = normalizeRecord({
+      studentName,
+      eventDate,
+      dropOffParentName: parentName,
+      dropOffTime: actionTime,
+      dropOffTimestamp: timestamp,
+      dropOffLateReason: trimmedLateReason,
+      pickUpParentName: session?.pickUpParentName,
+      pickUpTime: session?.pickUpTime,
+      pickUpTimestamp: session?.pickUpTimestamp,
+      pickUpLateReason: session?.pickUpLateReason,
+    });
+
+    if (sessionIndex >= 0) {
+      records[sessionIndex] = nextSession;
+    } else {
+      records.push(nextSession);
+    }
+  } else {
+    if (!session?.dropOffTimestamp) {
+      throw new Error('This student must be dropped off before they can be picked up.');
+    }
+
+    if (session.pickUpTimestamp) {
+      throw new Error('This student has already been picked up today.');
+    }
+
+    records[sessionIndex] = normalizeRecord({
+      ...session,
+      pickUpParentName: parentName,
+      pickUpTime: actionTime,
+      pickUpTimestamp: timestamp,
+      pickUpLateReason: trimmedLateReason,
+    });
+  }
+
+  writeRecords(records);
+  if (timingStatus === 'Late') {
+    await trySendLateAttendanceEmail({
+      studentName,
+      parentName,
+      action: attendanceAction,
+      actionTime,
+      eventDate,
+      lateReason: trimmedLateReason,
+      profile,
+    });
+  }
+  return { action: attendanceAction, eventDate, actionTime, timestamp, timingStatus };
 }
 
 async function basicAuth(req, res, next) {
@@ -181,12 +455,27 @@ async function basicAuth(req, res, next) {
 app.post('/checkin', async (req, res) => {
   const studentName = (req.body.studentName || '').trim();
   const parentName = (req.body.parentName || '').trim();
+  const action = normalizeAction(req.body.action);
+  const lateReason = (req.body.lateReason || '').trim();
   if (!studentName || !parentName) {
     return res.status(400).json({ error: 'Student name and parent name are required' });
   }
 
-  const arrival = await recordCheckin(studentName, parentName);
-  return res.json({ success: true, studentName, parentName, ...arrival });
+  try {
+    const attendance = await recordAttendanceAction(studentName, parentName, action, lateReason);
+    return res.json({ success: true, studentName, parentName, ...attendance });
+  } catch (error) {
+    if (error.requiresLateReason) {
+      return res.status(409).json({
+        error: error.message,
+        requiresLateReason: true,
+        action: error.action,
+        actionTime: error.actionTime,
+        timingStatus: error.timingStatus,
+      });
+    }
+    return res.status(400).json({ error: error.message || 'Unable to save attendance' });
+  }
 });
 
 app.get('/attendance', async (req, res) => {
@@ -226,6 +515,7 @@ function getDefaultAdminProfile() {
     email: ADMIN_EMAIL,
     lastPasswordChange: new Date().toISOString(),
     lastReminderSent: null,
+    scheduleSettings: normalizeScheduleSettings(),
   };
 }
 
@@ -236,6 +526,13 @@ function normalizeAdminProfile(profile) {
     email: profile.email || ADMIN_EMAIL,
     lastPasswordChange: profile.lastPasswordChange || profile.last_password_change || profile.lastPasswordReminder || new Date().toISOString(),
     lastReminderSent: profile.lastReminderSent || profile.last_reminder_sent || profile.lastPasswordReminder || null,
+    scheduleSettings: normalizeScheduleSettings({
+      lateDropOffAfter: profile.lateDropOffAfter,
+      latePickUpAfter: profile.latePickUpAfter,
+      late_drop_off_after: profile.late_drop_off_after,
+      late_pick_up_after: profile.late_pick_up_after,
+      ...(profile.scheduleSettings || {}),
+    }),
   };
 }
 
@@ -251,9 +548,13 @@ async function ensureAdminTable() {
       password TEXT NOT NULL,
       email TEXT NOT NULL,
       last_password_change TIMESTAMPTZ NOT NULL,
-      last_reminder_sent TIMESTAMPTZ
+      last_reminder_sent TIMESTAMPTZ,
+      late_drop_off_after TEXT,
+      late_pick_up_after TEXT
     )
   `);
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS late_drop_off_after TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS late_pick_up_after TEXT');
   adminTableReady = true;
 }
 
@@ -288,20 +589,27 @@ async function writeAdminProfile(profile) {
   if (dbPool) {
     await ensureAdminTable();
     await dbPool.query(`
-      INSERT INTO admin_profile (id, username, password, email, last_password_change, last_reminder_sent)
-      VALUES (1, $1, $2, $3, $4, $5)
+      INSERT INTO admin_profile (
+        id, username, password, email, last_password_change, last_reminder_sent,
+        late_drop_off_after, late_pick_up_after
+      )
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7)
       ON CONFLICT (id) DO UPDATE SET
         username = EXCLUDED.username,
         password = EXCLUDED.password,
         email = EXCLUDED.email,
         last_password_change = EXCLUDED.last_password_change,
-        last_reminder_sent = EXCLUDED.last_reminder_sent
+        last_reminder_sent = EXCLUDED.last_reminder_sent,
+        late_drop_off_after = EXCLUDED.late_drop_off_after,
+        late_pick_up_after = EXCLUDED.late_pick_up_after
     `, [
       profile.username,
       profile.password,
       profile.email,
       profile.lastPasswordChange || new Date().toISOString(),
       profile.lastReminderSent || null,
+      normalizeScheduleSettings(profile.scheduleSettings).lateDropOffAfter,
+      normalizeScheduleSettings(profile.scheduleSettings).latePickUpAfter,
     ]);
     return;
   }
@@ -365,6 +673,42 @@ async function sendPasswordReminder(profile) {
   return true;
 }
 
+async function sendLateAttendanceEmail(details) {
+  const transporter = getMailTransport();
+  if (!transporter) {
+    console.log('SMTP not configured. Late attendance email not sent.');
+    return false;
+  }
+
+  const actionLabel = details.action === 'pick_up' ? 'Late pick-up' : 'Late drop-off';
+  const text = [
+    actionLabel,
+    '',
+    `Student: ${details.studentName}`,
+    `Parent: ${details.parentName}`,
+    `Date: ${details.eventDate}`,
+    `Time: ${details.actionTime}`,
+    `Reason: ${details.lateReason}`,
+  ].join('\n');
+
+  await transporter.sendMail({
+    from: SMTP_FROM,
+    to: details.profile.email,
+    subject: `${actionLabel}: ${details.studentName}`,
+    text,
+  });
+
+  return true;
+}
+
+async function trySendLateAttendanceEmail(details) {
+  try {
+    await sendLateAttendanceEmail(details);
+  } catch (error) {
+    console.error('Failed to send late attendance email:', error.message || error);
+  }
+}
+
 async function checkAndSendPasswordReminder() {
   const profile = await readAdminProfile();
   const reminderDue = isReminderDue(profile);
@@ -401,20 +745,41 @@ function readUsers() {
 }
 
 async function readRecords() {
+  const profile = await readAdminProfile();
+  const scheduleSettings = profile.scheduleSettings;
+
   if (dbPool) {
     await ensureAttendanceTable();
     const result = await dbPool.query(`
-      SELECT student_name, parent_name, arrival_date, arrival_time, timestamp
+      SELECT student_name, parent_name, arrival_date, arrival_time, timestamp,
+        event_date, drop_off_parent_name, drop_off_time, drop_off_timestamp,
+        drop_off_late_reason, pick_up_parent_name, pick_up_time, pick_up_timestamp,
+        pick_up_late_reason
       FROM attendance_records
       ORDER BY timestamp ASC, id ASC
     `);
-    return result.rows.map((record) => ({
+    return result.rows.map((record) => {
+      const normalized = normalizeRecord({
       studentName: record.student_name,
       parentName: record.parent_name,
       arrivalDate: record.arrival_date,
       arrivalTime: record.arrival_time,
       timestamp: new Date(record.timestamp).toISOString(),
-    }));
+      eventDate: record.event_date,
+      dropOffParentName: record.drop_off_parent_name,
+      dropOffTime: record.drop_off_time,
+      dropOffTimestamp: record.drop_off_timestamp ? new Date(record.drop_off_timestamp).toISOString() : '',
+      dropOffLateReason: record.drop_off_late_reason,
+      pickUpParentName: record.pick_up_parent_name,
+      pickUpTime: record.pick_up_time,
+      pickUpTimestamp: record.pick_up_timestamp ? new Date(record.pick_up_timestamp).toISOString() : '',
+      pickUpLateReason: record.pick_up_late_reason,
+      });
+      return {
+        ...normalized,
+        timingFlags: getTimingFlags(normalized, scheduleSettings),
+      };
+    });
   }
 
   ensureAttendanceFile();
@@ -422,37 +787,88 @@ async function readRecords() {
 
   return csv.split('\n').filter(Boolean).slice(1).map((line) => {
     const values = parseCsvLine(line);
+    let record = null;
     if (values.length === 3) {
       const timestamp = values[2];
       const date = timestamp ? new Date(timestamp) : null;
-      return {
+      record = normalizeRecord({
         studentName: values[0],
         parentName: values[1],
         arrivalDate: date && !Number.isNaN(date.getTime()) ? formatArrivalDate(date) : '',
         arrivalTime: date && !Number.isNaN(date.getTime()) ? formatArrivalTime(date) : '',
         timestamp,
-      };
-    }
-
-    if (values.length === 5) {
-      return {
+      });
+    } else if (values.length === 5) {
+      record = normalizeRecord({
         studentName: values[0],
         parentName: values[1],
         arrivalDate: values[2],
         arrivalTime: values[3],
         timestamp: values[4],
-      };
+      });
+    } else if (values.length === 8) {
+      record = normalizeRecord({
+        studentName: values[0],
+        eventDate: values[1],
+        dropOffParentName: values[2],
+        dropOffTime: values[3],
+        dropOffTimestamp: values[4],
+        pickUpParentName: values[5],
+        pickUpTime: values[6],
+        pickUpTimestamp: values[7],
+      });
+    } else if (values.length === 10) {
+      record = normalizeRecord({
+        studentName: values[0],
+        eventDate: values[1],
+        dropOffParentName: values[2],
+        dropOffTime: values[3],
+        dropOffTimestamp: values[4],
+        dropOffLateReason: values[5],
+        pickUpParentName: values[6],
+        pickUpTime: values[7],
+        pickUpTimestamp: values[8],
+        pickUpLateReason: values[9],
+      });
+    } else if (values.length >= 6) {
+      record = normalizeRecord({
+        studentName: values[0],
+        parentName: values[1],
+        arrivalDate: values[3],
+        arrivalTime: values[4],
+        timestamp: values[5],
+      });
     }
 
-    if (values.length < 6) return null;
+    if (!record) return null;
     return {
-      studentName: values[0],
-      parentName: values[1],
-      arrivalDate: values[3],
-      arrivalTime: values[4],
-      timestamp: values[5],
+      ...record,
+      timingFlags: getTimingFlags(record, scheduleSettings),
     };
   }).filter(Boolean);
+}
+
+function writeRecords(records) {
+  ensureAttendanceFile();
+  const csvLines = [
+    'StudentName,EventDate,DropOffParentName,DropOffTime,DropOffTimestamp,DropOffLateReason,PickUpParentName,PickUpTime,PickUpTimestamp,PickUpLateReason',
+    ...records.map((record) => {
+      const normalized = normalizeRecord(record);
+      return [
+        normalized.studentName,
+        normalized.eventDate,
+        normalized.dropOffParentName,
+        normalized.dropOffTime,
+        normalized.dropOffTimestamp,
+        normalized.dropOffLateReason,
+        normalized.pickUpParentName,
+        normalized.pickUpTime,
+        normalized.pickUpTimestamp,
+        normalized.pickUpLateReason,
+      ].map((value) => `"${escapeCsv(value)}"`).join(',');
+    }),
+  ];
+  fs.writeFileSync(csvFile, csvLines.join('\n') + '\n', 'utf8');
 }
 
 app.post('/api/admin/login', async (req, res) => {
@@ -491,9 +907,30 @@ app.post('/api/admin/profile', basicAuth, async (req, res) => {
     email,
     lastPasswordChange: new Date().toISOString(),
     lastReminderSent: currentProfile.lastReminderSent || null,
+    scheduleSettings: currentProfile.scheduleSettings,
   };
   await writeAdminProfile(profile);
   return res.json({ username: profile.username, email: profile.email, passwordChangeRequired: false });
+});
+
+app.get('/api/admin/schedule-settings', basicAuth, async (req, res) => {
+  const profile = await readAdminProfile();
+  res.json(profile.scheduleSettings);
+});
+
+app.post('/api/admin/schedule-settings', basicAuth, async (req, res) => {
+  const scheduleSettings = normalizeScheduleSettings(req.body);
+  if (!isValidTimeValue(req.body.lateDropOffAfter) || !isValidTimeValue(req.body.latePickUpAfter)) {
+    return res.status(400).json({ error: 'Late drop-off and late pick-up times must use HH:MM format.' });
+  }
+
+  const profile = await readAdminProfile();
+  await writeAdminProfile({
+    ...profile,
+    scheduleSettings,
+  });
+
+  res.json(scheduleSettings);
 });
 
 app.get('/api/records', basicAuth, async (req, res) => {
@@ -501,9 +938,10 @@ app.get('/api/records', basicAuth, async (req, res) => {
 });
 
 app.delete('/api/records', basicAuth, async (req, res) => {
-  const { studentName, parentName, timestamp } = req.body;
-  if (!studentName || !parentName || !timestamp) {
-    return res.status(400).send('Student name, parent name, and timestamp are required');
+  const { studentName, eventDate, dropOffTimestamp, timestamp } = req.body;
+  const recordTimestamp = dropOffTimestamp || timestamp;
+  if (!studentName || !eventDate || !recordTimestamp) {
+    return res.status(400).send('Student name, event date, and drop-off timestamp are required');
   }
 
   if (dbPool) {
@@ -512,12 +950,14 @@ app.delete('/api/records', basicAuth, async (req, res) => {
       DELETE FROM attendance_records
       WHERE id = (
         SELECT id FROM attendance_records
-        WHERE student_name = $1 AND parent_name = $2 AND timestamp = $3
+        WHERE student_name = $1
+          AND COALESCE(event_date, arrival_date) = $2
+          AND COALESCE(drop_off_timestamp, timestamp) = $3
         ORDER BY id ASC
         LIMIT 1
       )
       RETURNING id
-    `, [studentName, parentName, timestamp]);
+    `, [studentName, eventDate, recordTimestamp]);
 
     if (!result.rowCount) {
       return res.status(404).send('Record not found');
@@ -527,16 +967,16 @@ app.delete('/api/records', basicAuth, async (req, res) => {
   }
 
   const records = await readRecords();
-  const remaining = records.filter((record) => !(record.studentName === studentName && record.parentName === parentName && record.timestamp === timestamp));
+  const remaining = records.filter((record) => !(
+    record.studentName === studentName
+    && record.eventDate === eventDate
+    && record.dropOffTimestamp === recordTimestamp
+  ));
   if (remaining.length === records.length) {
     return res.status(404).send('Record not found');
   }
 
-  const csvLines = [
-    'StudentName,ParentName,ArrivalDate,ArrivalTime,Timestamp',
-    ...remaining.map((record) => `"${escapeCsv(record.studentName)}","${escapeCsv(record.parentName)}","${escapeCsv(record.arrivalDate)}","${escapeCsv(record.arrivalTime)}","${escapeCsv(record.timestamp)}"`),
-  ];
-  fs.writeFileSync(csvFile, csvLines.join('\n') + '\n', 'utf8');
+  writeRecords(remaining);
   res.json({ deleted: true });
 });
 

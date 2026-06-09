@@ -12,6 +12,7 @@
   <main>
     <!-- LOGIN SCREEN -->
     <div id="loginBox">
+      <img class="site-logo" src="/school-logo.jpeg" alt="School logo" />
       <h1>Admin Login</h1>
       <form id="loginForm" onsubmit="login(); return false;">
         <label for="username">Username</label>
@@ -25,6 +26,7 @@
 
     <!-- DASHBOARD (hidden until login) -->
     <div id="dashboard" style="display: none;">
+      <img class="site-logo site-logo-dashboard" src="/school-logo.jpeg" alt="School logo" />
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
         <h1>Attendance Dashboard</h1>
         <div>
@@ -40,19 +42,40 @@
         <button id="print" type="button" onclick="printPage()">Print / Save PDF</button>
       </div>
 
+      <form id="scheduleSettings" class="settings-panel" onsubmit="saveScheduleSettings(); return false;">
+        <h2>Late Cutoff Times</h2>
+        <div class="settings-field">
+          <label for="lateDropOffAfter">Late drop-off at or after</label>
+          <input id="lateDropOffAfter" type="time" required />
+        </div>
+        <div class="settings-field">
+          <label for="latePickUpAfter">Late pick-up at or after</label>
+          <input id="latePickUpAfter" type="time" required />
+        </div>
+        <div class="settings-actions">
+          <button type="submit">Save Times</button>
+          <span id="settingsMessage"></span>
+        </div>
+      </form>
+
       <div id="recordsSection">
         <table>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Arrival Date</th>
-              <th>Arrival Time</th>
+              <th>Student</th>
+              <th>Status</th>
+              <th>Late Labels</th>
+              <th>Event Date</th>
+              <th>Drop-off</th>
+              <th>Pick-up</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody id="data"></tbody>
         </table>
       </div>
+
+      <section id="lateReasonsReport" class="print-only"></section>
     </div>
   </main>
 </body>
