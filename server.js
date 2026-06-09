@@ -26,6 +26,7 @@ const dbPool = DATABASE_URL ? new Pool({
   ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
 }) : null;
 let adminTableReady = false;
+let attendanceTableReady = false;
 
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
@@ -120,12 +121,40 @@ function addUser(firstName, lastName, phone, email) {
   fs.appendFileSync(usersFile, line, 'utf8');
 }
 
-function recordCheckin(studentName, parentName) {
-  ensureAttendanceFile();
+async function ensureAttendanceTable() {
+  if (!dbPool || attendanceTableReady) {
+    return;
+  }
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS attendance_records (
+      id BIGSERIAL PRIMARY KEY,
+      student_name TEXT NOT NULL,
+      parent_name TEXT NOT NULL,
+      arrival_date TEXT NOT NULL,
+      arrival_time TEXT NOT NULL,
+      timestamp TIMESTAMPTZ NOT NULL
+    )
+  `);
+  attendanceTableReady = true;
+}
+
+async function recordCheckin(studentName, parentName) {
   const arrivedAt = new Date();
   const timestamp = arrivedAt.toISOString();
   const arrivalDate = formatArrivalDate(arrivedAt);
   const arrivalTime = formatArrivalTime(arrivedAt);
+
+  if (dbPool) {
+    await ensureAttendanceTable();
+    await dbPool.query(`
+      INSERT INTO attendance_records (student_name, parent_name, arrival_date, arrival_time, timestamp)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [studentName, parentName, arrivalDate, arrivalTime, timestamp]);
+    return { arrivalDate, arrivalTime, timestamp };
+  }
+
+  ensureAttendanceFile();
   const line = `"${escapeCsv(studentName)}","${escapeCsv(parentName)}","${arrivalDate}","${arrivalTime}","${timestamp}"\n`;
   fs.appendFileSync(csvFile, line, 'utf8');
   return { arrivalDate, arrivalTime, timestamp };
@@ -149,19 +178,19 @@ async function basicAuth(req, res, next) {
   return res.status(403).send('Forbidden');
 }
 
-app.post('/checkin', (req, res) => {
+app.post('/checkin', async (req, res) => {
   const studentName = (req.body.studentName || '').trim();
   const parentName = (req.body.parentName || '').trim();
   if (!studentName || !parentName) {
     return res.status(400).json({ error: 'Student name and parent name are required' });
   }
 
-  const arrival = recordCheckin(studentName, parentName);
+  const arrival = await recordCheckin(studentName, parentName);
   return res.json({ success: true, studentName, parentName, ...arrival });
 });
 
-app.get('/attendance', (req, res) => {
-  res.json(readRecords());
+app.get('/attendance', async (req, res) => {
+  res.json(await readRecords());
 });
 
 app.post('/register', (req, res) => {
@@ -371,7 +400,23 @@ function readUsers() {
   }).filter(Boolean);
 }
 
-function readRecords() {
+async function readRecords() {
+  if (dbPool) {
+    await ensureAttendanceTable();
+    const result = await dbPool.query(`
+      SELECT student_name, parent_name, arrival_date, arrival_time, timestamp
+      FROM attendance_records
+      ORDER BY timestamp ASC, id ASC
+    `);
+    return result.rows.map((record) => ({
+      studentName: record.student_name,
+      parentName: record.parent_name,
+      arrivalDate: record.arrival_date,
+      arrivalTime: record.arrival_time,
+      timestamp: new Date(record.timestamp).toISOString(),
+    }));
+  }
+
   ensureAttendanceFile();
   const csv = fs.readFileSync(csvFile, 'utf8');
 
@@ -451,17 +496,37 @@ app.post('/api/admin/profile', basicAuth, async (req, res) => {
   return res.json({ username: profile.username, email: profile.email, passwordChangeRequired: false });
 });
 
-app.get('/api/records', basicAuth, (req, res) => {
-  res.json(readRecords());
+app.get('/api/records', basicAuth, async (req, res) => {
+  res.json(await readRecords());
 });
 
-app.delete('/api/records', basicAuth, (req, res) => {
+app.delete('/api/records', basicAuth, async (req, res) => {
   const { studentName, parentName, timestamp } = req.body;
   if (!studentName || !parentName || !timestamp) {
     return res.status(400).send('Student name, parent name, and timestamp are required');
   }
 
-  const records = readRecords();
+  if (dbPool) {
+    await ensureAttendanceTable();
+    const result = await dbPool.query(`
+      DELETE FROM attendance_records
+      WHERE id = (
+        SELECT id FROM attendance_records
+        WHERE student_name = $1 AND parent_name = $2 AND timestamp = $3
+        ORDER BY id ASC
+        LIMIT 1
+      )
+      RETURNING id
+    `, [studentName, parentName, timestamp]);
+
+    if (!result.rowCount) {
+      return res.status(404).send('Record not found');
+    }
+
+    return res.json({ deleted: true });
+  }
+
+  const records = await readRecords();
   const remaining = records.filter((record) => !(record.studentName === studentName && record.parentName === parentName && record.timestamp === timestamp));
   if (remaining.length === records.length) {
     return res.status(404).send('Record not found');
