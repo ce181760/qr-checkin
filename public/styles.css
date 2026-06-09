@@ -24,6 +24,10 @@ h1 {
   font-size: 1.75rem;
 }
 
+#successMessage {
+  white-space: pre-line;
+}
+
 form,
 .toolbar {
   display: grid;

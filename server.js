@@ -17,6 +17,7 @@ const SMTP_USER = process.env.SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || '';
 const SMTP_FROM = process.env.SMTP_FROM || `no-reply@${process.env.SMTP_HOST || 'localhost'}`;
 const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
+const ARRIVAL_TIME_ZONE = 'America/New_York';
 
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
@@ -38,8 +39,58 @@ function ensureUsersFile() {
 function ensureAttendanceFile() {
   ensureDir();
   if (!fs.existsSync(csvFile)) {
-    fs.writeFileSync(csvFile, 'StudentName,ParentName,Timestamp\n', 'utf8');
+    fs.writeFileSync(csvFile, 'StudentName,ParentName,ArrivalDate,ArrivalTime,Timestamp\n', 'utf8');
   }
+}
+
+function escapeCsv(value) {
+  return String(value || '').replace(/"/g, '""');
+}
+
+function parseCsvLine(line) {
+  const values = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const nextChar = line[index + 1];
+
+    if (char === '"' && inQuotes && nextChar === '"') {
+      current += '"';
+      index += 1;
+    } else if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      values.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  values.push(current);
+  return values;
+}
+
+function formatArrivalDate(date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: ARRIVAL_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function formatArrivalTime(date) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: ARRIVAL_TIME_ZONE,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(date);
 }
 
 function userExists(firstName, lastName) {
@@ -57,15 +108,19 @@ function userExists(firstName, lastName) {
 
 function addUser(firstName, lastName, phone, email) {
   ensureUsersFile();
-  const line = `"${firstName.replace(/"/g, '""')}","${lastName.replace(/"/g, '""')}","${phone}","${email}"\n`;
+  const line = `"${escapeCsv(firstName)}","${escapeCsv(lastName)}","${escapeCsv(phone)}","${escapeCsv(email)}"\n`;
   fs.appendFileSync(usersFile, line, 'utf8');
 }
 
 function recordCheckin(studentName, parentName) {
   ensureAttendanceFile();
-  const timestamp = new Date().toISOString();
-  const line = `"${studentName.replace(/"/g, '""')}","${parentName.replace(/"/g, '""')}","${timestamp}"\n`;
+  const arrivedAt = new Date();
+  const timestamp = arrivedAt.toISOString();
+  const arrivalDate = formatArrivalDate(arrivedAt);
+  const arrivalTime = formatArrivalTime(arrivedAt);
+  const line = `"${escapeCsv(studentName)}","${escapeCsv(parentName)}","${arrivalDate}","${arrivalTime}","${timestamp}"\n`;
   fs.appendFileSync(csvFile, line, 'utf8');
+  return { arrivalDate, arrivalTime, timestamp };
 }
 
 function basicAuth(req, res, next) {
@@ -93,23 +148,12 @@ app.post('/checkin', (req, res) => {
     return res.status(400).json({ error: 'Student name and parent name are required' });
   }
 
-  recordCheckin(studentName, parentName);
-  return res.json({ success: true, studentName, parentName, timestamp: new Date().toISOString() });
+  const arrival = recordCheckin(studentName, parentName);
+  return res.json({ success: true, studentName, parentName, ...arrival });
 });
 
 app.get('/attendance', (req, res) => {
-  ensureAttendanceFile();
-  const csv = fs.readFileSync(csvFile, 'utf8');
-  const records = csv.split('\n').filter(Boolean).slice(1).map((line) => {
-    const match = line.match(/^"((?:[^"]|"")*)","((?:[^"]|"")*)","([^"]+)"$/);
-    if (!match) return null;
-    return {
-      studentName: match[1].replace(/""/g, '"'),
-      parentName: match[2].replace(/""/g, '"'),
-      timestamp: match[3],
-    };
-  }).filter(Boolean);
-  res.json(records);
+  res.json(readRecords());
 });
 
 app.post('/register', (req, res) => {
@@ -271,12 +315,36 @@ function readRecords() {
   const csv = fs.readFileSync(csvFile, 'utf8');
 
   return csv.split('\n').filter(Boolean).slice(1).map((line) => {
-    const match = line.match(/^"((?:[^"]|"")*)","((?:[^"]|"")*)","([^"]+)"$/);
-    if (!match) return null;
+    const values = parseCsvLine(line);
+    if (values.length === 3) {
+      const timestamp = values[2];
+      const date = timestamp ? new Date(timestamp) : null;
+      return {
+        studentName: values[0],
+        parentName: values[1],
+        arrivalDate: date && !Number.isNaN(date.getTime()) ? formatArrivalDate(date) : '',
+        arrivalTime: date && !Number.isNaN(date.getTime()) ? formatArrivalTime(date) : '',
+        timestamp,
+      };
+    }
+
+    if (values.length === 5) {
+      return {
+        studentName: values[0],
+        parentName: values[1],
+        arrivalDate: values[2],
+        arrivalTime: values[3],
+        timestamp: values[4],
+      };
+    }
+
+    if (values.length < 6) return null;
     return {
-      studentName: match[1].replace(/""/g, '"'),
-      parentName: match[2].replace(/""/g, '"'),
-      timestamp: match[3],
+      studentName: values[0],
+      parentName: values[1],
+      arrivalDate: values[3],
+      arrivalTime: values[4],
+      timestamp: values[5],
     };
   }).filter(Boolean);
 }
@@ -338,7 +406,10 @@ app.delete('/api/records', basicAuth, (req, res) => {
     return res.status(404).send('Record not found');
   }
 
-  const csvLines = ['StudentName,ParentName,Timestamp', ...remaining.map((record) => `"${record.studentName.replace(/"/g, '""')}","${record.parentName.replace(/"/g, '""')}","${record.timestamp}"`)];
+  const csvLines = [
+    'StudentName,ParentName,ArrivalDate,ArrivalTime,Timestamp',
+    ...remaining.map((record) => `"${escapeCsv(record.studentName)}","${escapeCsv(record.parentName)}","${escapeCsv(record.arrivalDate)}","${escapeCsv(record.arrivalTime)}","${escapeCsv(record.timestamp)}"`),
+  ];
   fs.writeFileSync(csvFile, csvLines.join('\n') + '\n', 'utf8');
   res.json({ deleted: true });
 });

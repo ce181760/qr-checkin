@@ -2,6 +2,7 @@ let authenticated = false;
 let authHeader = null;
 let currentRecords = [];
 let currentProfile = null;
+const ARRIVAL_TIME_ZONE = 'America/New_York';
 
 window.addEventListener('DOMContentLoaded', initAdmin);
 
@@ -167,21 +168,22 @@ function loadData() {
         html += `
           <tr>
             <td>${escapeHtml(record.studentName)} / ${escapeHtml(record.parentName)}</td>
-            <td>${escapeHtml(new Date(record.timestamp).toLocaleString())}</td>
+            <td>${escapeHtml(record.arrivalDate || formatDate(record.timestamp))}</td>
+            <td>${escapeHtml(formatArrivalTime(record))}</td>
             <td><button type="button" onclick="deleteRecord(${index})">Delete</button></td>
           </tr>
         `;
       });
 
       if (!html) {
-        html = "<tr><td colspan=\"3\">No records yet.</td></tr>";
+        html = "<tr><td colspan=\"4\">No records yet.</td></tr>";
       }
 
       document.getElementById("data").innerHTML = html;
     })
     .catch(error => {
       console.error('Attendance load error:', error);
-      document.getElementById("data").innerHTML = `<tr><td colspan=\"3\">Unable to load attendance: ${escapeHtml(error.message)}</td></tr>`;
+      document.getElementById("data").innerHTML = `<tr><td colspan=\"4\">Unable to load attendance: ${escapeHtml(error.message)}</td></tr>`;
     });
 }
 
@@ -228,21 +230,22 @@ function filterTable() {
   const rows = document.querySelectorAll("#data tr");
 
   rows.forEach(row => {
-    const name = row.cells[0] ? row.cells[0].innerText.toLowerCase() : "";
-    row.style.display = name.includes(input) ? "" : "none";
+    const text = Array.from(row.cells).map(cell => cell.innerText.toLowerCase()).join(" ");
+    row.style.display = text.includes(input) ? "" : "none";
   });
 }
 
 // EXPORT TO CSV
 function exportCSV() {
   const rows = document.querySelectorAll("#data tr");
-  let csv = "Name,Check-in Time\n";
+  let csv = "Name,Arrival Date,Arrival Time\n";
 
   rows.forEach(row => {
-    if (row.style.display !== "none") {
+    if (row.style.display !== "none" && row.cells.length >= 3) {
       const name = row.cells[0].innerText.replace(/"/g, '""');
-      const time = row.cells[1].innerText.replace(/"/g, '""');
-      csv += `"${name}","${time}"\n`;
+      const arrivalDate = row.cells[1].innerText.replace(/"/g, '""');
+      const arrivalTime = row.cells[2].innerText.replace(/"/g, '""');
+      csv += `"${name}","${arrivalDate}","${arrivalTime}"\n`;
     }
   });
 
@@ -259,4 +262,39 @@ function exportCSV() {
 // PRINT
 function printPage() {
   window.print();
+}
+
+function formatDate(timestamp) {
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, { timeZone: ARRIVAL_TIME_ZONE });
+}
+
+function formatTime(timestamp) {
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString(undefined, {
+    timeZone: ARRIVAL_TIME_ZONE,
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatStoredTime(arrivalTime) {
+  const match = String(arrivalTime || '').match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) {
+    return arrivalTime || '';
+  }
+
+  const hours = Number(match[1]);
+  const minutes = match[2];
+  if (Number.isNaN(hours) || hours < 0 || hours > 23) {
+    return arrivalTime;
+  }
+
+  const period = hours >= 12 ? 'PM' : 'AM';
+  const displayHours = hours % 12 || 12;
+  return `${displayHours}:${minutes} ${period}`;
+}
+
+function formatArrivalTime(record) {
+  return formatStoredTime(record.arrivalTime) || formatTime(record.timestamp);
 }

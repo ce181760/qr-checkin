@@ -9,19 +9,38 @@
 <body>
   <main>
     <h1>Check-In Successful</h1>
-    <p id="successMessage">Thanks — your check-in was successful.</p>
+    <p id="successMessage">Thanks - your check-in was successful.</p>
     <a href="/">Back to check-in</a>
   </main>
   <script>
     const params = new URLSearchParams(window.location.search);
     const studentName = params.get('studentName');
     const parentName = params.get('parentName');
+    const arrivalTime = params.get('arrivalTime');
 
-    if (studentName || parentName) {
-      const message = [];
+    function formatArrivalTime(time) {
+      const match = String(time || '').match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+      if (!match) {
+        return time || '';
+      }
+
+      const hours = Number(match[1]);
+      const minutes = match[2];
+      if (Number.isNaN(hours) || hours < 0 || hours > 23) {
+        return time;
+      }
+
+      const period = hours >= 12 ? 'PM' : 'AM';
+      const displayHours = hours % 12 || 12;
+      return `${displayHours}:${minutes} ${period}`;
+    }
+
+    if (studentName || parentName || arrivalTime) {
+      const message = ['Check-in successful!'];
       if (studentName) message.push(`Student: ${studentName}`);
       if (parentName) message.push(`Parent: ${parentName}`);
-      document.getElementById('successMessage').innerText = `Check-in successful! ${message.join(' · ')}`;
+      if (arrivalTime) message.push(`Arrival time: ${formatArrivalTime(arrivalTime)}`);
+      document.getElementById('successMessage').innerText = message.join('\n');
     }
   </script>
 </body>
