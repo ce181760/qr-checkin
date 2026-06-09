@@ -3,20 +3,35 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Name Check-In</title>
+  <title>Student Attendance</title>
   <link rel="stylesheet" href="/styles.css" />
   <script src="/script.js" defer></script>
 </head>
 <body>
   <main>
     <img class="site-logo" src="/school-logo.jpeg" alt="School logo" />
-    <h1>Name Check-In</h1>
+    <h1>Student Attendance</h1>
     <form id="checkin-form" onsubmit="checkIn(); return false;">
+      <fieldset class="action-options">
+        <legend>What are you doing?</legend>
+        <label>
+          <input type="radio" name="action" value="drop_off" checked />
+          Drop off
+        </label>
+        <label>
+          <input type="radio" name="action" value="pick_up" />
+          Pick up
+        </label>
+      </fieldset>
       <label for="studentName">Student name</label>
       <input id="studentName" name="studentName" type="text" required autocomplete="name" />
       <label for="parentName">Parent name</label>
       <input id="parentName" name="parentName" type="text" required autocomplete="name" />
-      <button type="submit">Check In</button>
+      <div id="lateReasonGroup" class="late-reason-group" hidden>
+        <label for="lateReason">Reason for being late</label>
+        <textarea id="lateReason" name="lateReason" rows="4"></textarea>
+      </div>
+      <button type="submit">Submit</button>
     </form>
     <div id="message"></div>
   </main>
