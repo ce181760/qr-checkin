@@ -40,7 +40,6 @@
       if (studentName) message.push(`Student: ${studentName}`);
       if (parentName) message.push(`Parent: ${parentName}`);
       if (arrivalTime) message.push(`Arrival time: ${formatArrivalTime(arrivalTime)}`);
-      message.push('Your On time');
       document.getElementById('successMessage').innerText = message.join('\n');
     }
   </script>
