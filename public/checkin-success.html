@@ -16,11 +16,14 @@
     const params = new URLSearchParams(window.location.search);
     const studentName = params.get('studentName');
     const parentName = params.get('parentName');
+    const arrivalTime = params.get('arrivalTime');
 
-    if (studentName || parentName) {
+    if (studentName || parentName || arrivalTime) {
       const message = [];
       if (studentName) message.push(`Student: ${studentName}`);
       if (parentName) message.push(`Parent: ${parentName}`);
+      if (arrivalTime) message.push(`Arrival time: ${arrivalTime}`);
+      message.push('On time');
       document.getElementById('successMessage').innerText = `Check-in successful! ${message.join(' - ')}`;
     }
   </script>
