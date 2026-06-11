@@ -174,13 +174,14 @@ function loadData() {
             <td>${escapeHtml(record.eventDate || record.arrivalDate || formatDate(record.dropOffTimestamp || record.timestamp))}</td>
             <td>${escapeHtml(formatPersonTime(record.dropOffParentName || record.parentName, record.dropOffTime || record.arrivalTime, record.dropOffTimestamp || record.timestamp))}</td>
             <td>${escapeHtml(formatPersonTime(record.pickUpParentName, record.pickUpTime, record.pickUpTimestamp))}</td>
+            <td>${renderLatePickUpPayment(record, index)}</td>
             <td><button type="button" onclick="deleteRecord(${index})">Delete</button></td>
           </tr>
         `;
       });
 
       if (!html) {
-        html = "<tr><td colspan=\"7\">No records yet.</td></tr>";
+        html = "<tr><td colspan=\"8\">No records yet.</td></tr>";
       }
 
       document.getElementById("data").innerHTML = html;
@@ -188,7 +189,7 @@ function loadData() {
     })
     .catch(error => {
       console.error('Attendance load error:', error);
-      document.getElementById("data").innerHTML = `<tr><td colspan=\"7\">Unable to load attendance: ${escapeHtml(error.message)}</td></tr>`;
+      document.getElementById("data").innerHTML = `<tr><td colspan=\"8\">Unable to load attendance: ${escapeHtml(error.message)}</td></tr>`;
       document.getElementById("lateReasonsReport").innerHTML = "";
     });
 }
@@ -244,17 +245,18 @@ function filterTable() {
 // EXPORT TO CSV
 function exportCSV() {
   const rows = document.querySelectorAll("#data tr");
-  let csv = "Student,Status,Late Labels,Event Date,Drop-off,Pick-up\n";
+  let csv = "Student,Status,Late Labels,Event Date,Drop-off,Pick-up,Payment\n";
 
   rows.forEach(row => {
-    if (row.style.display !== "none" && row.cells.length >= 6) {
+    if (row.style.display !== "none" && row.cells.length >= 7) {
       const student = row.cells[0].innerText.replace(/"/g, '""');
       const status = row.cells[1].innerText.replace(/"/g, '""');
       const lateLabels = row.cells[2].innerText.replace(/"/g, '""');
       const eventDate = row.cells[3].innerText.replace(/"/g, '""');
       const dropOff = row.cells[4].innerText.replace(/"/g, '""');
       const pickUp = row.cells[5].innerText.replace(/"/g, '""');
-      csv += `"${student}","${status}","${lateLabels}","${eventDate}","${dropOff}","${pickUp}"\n`;
+      const payment = row.cells[6].innerText.replace(/"/g, '""');
+      csv += `"${student}","${status}","${lateLabels}","${eventDate}","${dropOff}","${pickUp}","${payment}"\n`;
     }
   });
 
@@ -344,6 +346,55 @@ function formatPersonTime(personName, storedTime, timestamp) {
   }
 
   return `${personName} at ${time}`;
+}
+
+function formatLatePickUpPayment(record) {
+  if (!record.pickUpLateReason) {
+    return '';
+  }
+
+  const status = record.pickUpLatePaymentConfirmed ? 'Confirmed $10 to @phcs1166' : 'Not confirmed';
+  const receipt = record.pickUpLatePaymentReceipt ? 'Receipt uploaded' : 'Receipt missing';
+  return `${status}; ${receipt}`;
+}
+
+function renderLatePickUpPayment(record, index) {
+  const status = formatLatePickUpPayment(record);
+  if (!status) {
+    return '';
+  }
+
+  const receiptButton = record.pickUpLatePaymentReceipt
+    ? ` <button type="button" class="link-button" onclick="viewLatePickUpReceipt(${index})">View receipt</button>`
+    : '';
+
+  return `${escapeHtml(status)}${receiptButton}`;
+}
+
+function viewLatePickUpReceipt(index) {
+  const record = currentRecords[index];
+  if (!record?.pickUpLatePaymentReceipt || !authenticated || !authHeader) {
+    return alert('Receipt is not available.');
+  }
+
+  fetch(`/api/late-pickup-receipts/${encodeURIComponent(record.pickUpLatePaymentReceipt)}`, {
+    headers: { Authorization: authHeader },
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(await response.text() || 'Unable to load receipt');
+      }
+      return response.blob();
+    })
+    .then((blob) => {
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    })
+    .catch((error) => {
+      console.error('Receipt load error:', error);
+      alert(`Could not load receipt: ${error.message}`);
+    });
 }
 
 function loadScheduleSettings() {
@@ -439,6 +490,7 @@ function renderLateReasonsReport(records) {
         parentName: record.pickUpParentName || '',
         time: formatStoredTime(record.pickUpTime) || formatTime(record.pickUpTimestamp),
         reason: record.pickUpLateReason,
+        payment: formatLatePickUpPayment(record),
       });
     }
   });
@@ -458,6 +510,7 @@ function renderLateReasonsReport(records) {
         <p><strong>Time:</strong> ${escapeHtml(entry.time)}</p>
         <p><strong>Parent:</strong> ${escapeHtml(entry.parentName)}</p>
         <p><strong>Reason:</strong> ${escapeHtml(entry.reason)}</p>
+        ${entry.payment ? `<p><strong>Payment:</strong> ${escapeHtml(entry.payment)}</p>` : ''}
       </div>
     `).join('')}
   `;

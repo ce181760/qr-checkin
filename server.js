@@ -10,6 +10,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const csvFile = path.join(DATA_DIR, 'attendance.csv');
 const usersFile = path.join(DATA_DIR, 'users.csv');
 const adminFile = path.join(DATA_DIR, 'admin.json');
+const receiptDir = path.join(DATA_DIR, 'late-pickup-receipts');
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'admin123';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@example.com';
@@ -28,6 +29,15 @@ const ARRIVAL_TIME_ZONE = 'America/New_York';
 const DEFAULT_LATE_DROP_OFF_AFTER = '08:36';
 const DEFAULT_LATE_PICK_UP_AFTER = '13:35';
 const DEFAULT_SENDER_NAME = 'Event Check-In';
+const LATE_PICK_UP_FEE_AMOUNT = '$10';
+const LATE_PICK_UP_PAYMENT_HANDLE = '@phcs1166';
+const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
+const RECEIPT_MIME_EXTENSIONS = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
 const MAX_REPORT_RECIPIENTS = 12;
 const DAILY_REPORT_SEND_AFTER_HOUR = parseInt(process.env.DAILY_REPORT_SEND_AFTER_HOUR, 10) || 18;
 const dbPool = DATABASE_URL ? new Pool({
@@ -38,12 +48,19 @@ let adminTableReady = false;
 let attendanceTableReady = false;
 
 app.use(express.urlencoded({ extended: false }));
-app.use(express.json());
+app.use(express.json({ limit: '8mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+}
+
+function ensureReceiptDir() {
+  ensureDir();
+  if (!fs.existsSync(receiptDir)) {
+    fs.mkdirSync(receiptDir, { recursive: true });
   }
 }
 
@@ -57,7 +74,7 @@ function ensureUsersFile() {
 function ensureAttendanceFile() {
   ensureDir();
   if (!fs.existsSync(csvFile)) {
-    fs.writeFileSync(csvFile, 'StudentName,EventDate,DropOffParentName,DropOffTime,DropOffTimestamp,DropOffLateReason,PickUpParentName,PickUpTime,PickUpTimestamp,PickUpLateReason\n', 'utf8');
+    fs.writeFileSync(csvFile, 'StudentName,EventDate,DropOffParentName,DropOffTime,DropOffTimestamp,DropOffLateReason,PickUpParentName,PickUpTime,PickUpTimestamp,PickUpLateReason,PickUpLatePaymentConfirmed,PickUpLatePaymentReceipt\n', 'utf8');
   }
 }
 
@@ -277,11 +294,82 @@ async function ensureAttendanceTable() {
   await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS pick_up_timestamp TIMESTAMPTZ');
   await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS drop_off_late_reason TEXT');
   await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS pick_up_late_reason TEXT');
+  await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS pick_up_late_payment_confirmed BOOLEAN DEFAULT FALSE');
+  await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS pick_up_late_payment_receipt TEXT');
   attendanceTableReady = true;
 }
 
 function normalizeAction(action) {
   return action === 'pick_up' ? 'pick_up' : 'drop_off';
+}
+
+function normalizeBoolean(value) {
+  return value === true || value === 'true' || value === 'on' || value === 1 || value === '1';
+}
+
+function hasReceiptPayload(receipt) {
+  return Boolean(receipt && typeof receipt.dataUrl === 'string' && receipt.dataUrl.trim());
+}
+
+function createLatePickUpRequirementError(message, actionTime) {
+  const error = new Error(message);
+  error.requiresLateReason = true;
+  error.requiresLatePayment = true;
+  error.requiresLatePaymentReceipt = true;
+  error.timingStatus = 'Late';
+  error.action = 'pick_up';
+  error.actionTime = actionTime;
+  return error;
+}
+
+function saveLatePickUpReceipt(studentName, timestamp, receipt) {
+  if (!hasReceiptPayload(receipt)) {
+    return '';
+  }
+
+  const match = receipt.dataUrl.match(/^data:([^;]+);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) {
+    throw new Error('Receipt upload must be a valid image file.');
+  }
+
+  const mimeType = match[1].toLowerCase();
+  const extension = RECEIPT_MIME_EXTENSIONS[mimeType];
+  if (!extension) {
+    throw new Error('Receipt upload must be a JPG, PNG, GIF, or WebP image.');
+  }
+
+  const bytes = Buffer.from(match[2], 'base64');
+  if (!bytes.length || bytes.length > MAX_RECEIPT_BYTES) {
+    throw new Error('Receipt upload must be 5 MB or smaller.');
+  }
+
+  ensureReceiptDir();
+  const safeStudent = String(studentName || 'student').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'student';
+  const safeTimestamp = String(timestamp || Date.now()).replace(/[^a-z0-9]+/gi, '');
+  const fileName = `${safeStudent}-${safeTimestamp}.${extension}`;
+  fs.writeFileSync(path.join(receiptDir, fileName), bytes);
+  return fileName;
+}
+
+function deleteLatePickUpReceipt(fileName) {
+  const safeFileName = path.basename(fileName || '');
+  if (!safeFileName) {
+    return;
+  }
+
+  const filePath = path.resolve(receiptDir, safeFileName);
+  const resolvedReceiptDir = path.resolve(receiptDir);
+  if (!filePath.startsWith(resolvedReceiptDir + path.sep)) {
+    return;
+  }
+
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (error) {
+    console.error('Failed to delete late pick-up receipt:', error.message || error);
+  }
 }
 
 function getSessionStatus(record) {
@@ -314,6 +402,8 @@ function normalizeRecord(record) {
     pickUpTime: record.pickUpTime || '',
     pickUpTimestamp: record.pickUpTimestamp || '',
     pickUpLateReason: record.pickUpLateReason || '',
+    pickUpLatePaymentConfirmed: normalizeBoolean(record.pickUpLatePaymentConfirmed),
+    pickUpLatePaymentReceipt: record.pickUpLatePaymentReceipt || '',
   };
 
   return {
@@ -334,7 +424,7 @@ function findSessionIndex(records, studentName, eventDate) {
   ));
 }
 
-async function recordAttendanceAction(studentName, parentName, action, lateReason = '') {
+async function recordAttendanceAction(studentName, parentName, action, lateReason = '', latePaymentConfirmed = false, latePaymentReceipt = null) {
   const attendanceAction = normalizeAction(action);
   const actionAt = new Date();
   const timestamp = actionAt.toISOString();
@@ -343,15 +433,26 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
   const profile = await readAdminProfile();
   const timingStatus = getActionTimingStatus(attendanceAction, timestamp, profile.scheduleSettings);
   const trimmedLateReason = String(lateReason || '').trim();
+  const paymentConfirmed = normalizeBoolean(latePaymentConfirmed);
 
   if (timingStatus === 'Late' && !trimmedLateReason) {
     const actionLabel = attendanceAction === 'pick_up' ? 'pick-up' : 'drop-off';
     const error = new Error(`Please enter a reason for the late ${actionLabel}.`);
     error.requiresLateReason = true;
+    error.requiresLatePayment = attendanceAction === 'pick_up';
+    error.requiresLatePaymentReceipt = attendanceAction === 'pick_up';
     error.timingStatus = timingStatus;
     error.action = attendanceAction;
     error.actionTime = actionTime;
     throw error;
+  }
+
+  if (timingStatus === 'Late' && attendanceAction === 'pick_up' && !paymentConfirmed) {
+    throw createLatePickUpRequirementError(`Please confirm the ${LATE_PICK_UP_FEE_AMOUNT} late pick-up payment to ${LATE_PICK_UP_PAYMENT_HANDLE}.`, actionTime);
+  }
+
+  if (timingStatus === 'Late' && attendanceAction === 'pick_up' && !hasReceiptPayload(latePaymentReceipt)) {
+    throw createLatePickUpRequirementError('Please upload a receipt screenshot for the late pick-up payment.', actionTime);
   }
 
   if (dbPool) {
@@ -405,15 +506,21 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
         throw new Error('This student has already been picked up today.');
       }
 
+      const receiptFileName = timingStatus === 'Late'
+        ? saveLatePickUpReceipt(studentName, timestamp, latePaymentReceipt)
+        : '';
+
       await dbPool.query(`
         UPDATE attendance_records
         SET event_date = COALESCE(event_date, arrival_date),
             pick_up_parent_name = $1,
             pick_up_time = $2,
             pick_up_timestamp = $3,
-            pick_up_late_reason = $4
-        WHERE id = $5
-      `, [parentName, actionTime, timestamp, trimmedLateReason, existing.rows[0].id]);
+            pick_up_late_reason = $4,
+            pick_up_late_payment_confirmed = $5,
+            pick_up_late_payment_receipt = $6
+        WHERE id = $7
+      `, [parentName, actionTime, timestamp, trimmedLateReason, timingStatus === 'Late' ? paymentConfirmed : false, receiptFileName, existing.rows[0].id]);
     }
 
     if (timingStatus === 'Late') {
@@ -424,6 +531,8 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
         actionTime,
         eventDate,
         lateReason: trimmedLateReason,
+        latePaymentConfirmed: attendanceAction === 'pick_up' && timingStatus === 'Late' ? paymentConfirmed : false,
+        latePaymentReceipt: attendanceAction === 'pick_up' && timingStatus === 'Late' ? true : false,
         profile,
       });
     }
@@ -452,6 +561,7 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
       pickUpTime: session?.pickUpTime,
       pickUpTimestamp: session?.pickUpTimestamp,
       pickUpLateReason: session?.pickUpLateReason,
+      pickUpLatePaymentConfirmed: session?.pickUpLatePaymentConfirmed,
     });
 
     if (sessionIndex >= 0) {
@@ -468,12 +578,18 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
       throw new Error('This student has already been picked up today.');
     }
 
+    const receiptFileName = timingStatus === 'Late'
+      ? saveLatePickUpReceipt(studentName, timestamp, latePaymentReceipt)
+      : '';
+
     records[sessionIndex] = normalizeRecord({
       ...session,
       pickUpParentName: parentName,
       pickUpTime: actionTime,
       pickUpTimestamp: timestamp,
       pickUpLateReason: trimmedLateReason,
+      pickUpLatePaymentConfirmed: timingStatus === 'Late' ? paymentConfirmed : false,
+      pickUpLatePaymentReceipt: receiptFileName,
     });
   }
 
@@ -486,6 +602,8 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
       actionTime,
       eventDate,
       lateReason: trimmedLateReason,
+      latePaymentConfirmed: attendanceAction === 'pick_up' && timingStatus === 'Late' ? paymentConfirmed : false,
+      latePaymentReceipt: attendanceAction === 'pick_up' && timingStatus === 'Late' ? true : false,
       profile,
     });
   }
@@ -515,21 +633,27 @@ app.post('/checkin', async (req, res) => {
   const parentName = (req.body.parentName || '').trim();
   const action = normalizeAction(req.body.action);
   const lateReason = (req.body.lateReason || '').trim();
+  const latePaymentConfirmed = req.body.latePaymentConfirmed;
+  const latePaymentReceipt = req.body.latePaymentReceipt || null;
   if (!studentName || !parentName) {
     return res.status(400).json({ error: 'Student name and parent name are required' });
   }
 
   try {
-    const attendance = await recordAttendanceAction(studentName, parentName, action, lateReason);
+    const attendance = await recordAttendanceAction(studentName, parentName, action, lateReason, latePaymentConfirmed, latePaymentReceipt);
     return res.json({ success: true, studentName, parentName, ...attendance });
   } catch (error) {
     if (error.requiresLateReason) {
       return res.status(409).json({
         error: error.message,
         requiresLateReason: true,
+        requiresLatePayment: Boolean(error.requiresLatePayment),
+        requiresLatePaymentReceipt: Boolean(error.requiresLatePaymentReceipt),
         action: error.action,
         actionTime: error.actionTime,
         timingStatus: error.timingStatus,
+        latePickUpFeeAmount: LATE_PICK_UP_FEE_AMOUNT,
+        latePickUpPaymentHandle: LATE_PICK_UP_PAYMENT_HANDLE,
       });
     }
     return res.status(400).json({ error: error.message || 'Unable to save attendance' });
@@ -826,7 +950,9 @@ async function sendLateAttendanceEmail(details) {
     `Date: ${details.eventDate}`,
     `Time: ${details.actionTime}`,
     `Reason: ${details.lateReason}`,
-  ].join('\n');
+    details.action === 'pick_up' ? `Late pick-up payment: ${details.latePaymentConfirmed ? `Confirmed ${LATE_PICK_UP_FEE_AMOUNT} to ${LATE_PICK_UP_PAYMENT_HANDLE}` : 'Not confirmed'}` : '',
+    details.action === 'pick_up' ? `Receipt uploaded: ${details.latePaymentReceipt ? 'Yes' : 'No'}` : '',
+  ].filter((line) => line !== '').join('\n');
 
   await transporter.sendMail({
     from: getMailFrom(details.profile),
@@ -857,6 +983,8 @@ function formatDailyReportRecord(record) {
   const reasons = [
     record.dropOffLateReason ? `Drop-off reason: ${record.dropOffLateReason}` : '',
     record.pickUpLateReason ? `Pick-up reason: ${record.pickUpLateReason}` : '',
+    record.pickUpLateReason ? `Pick-up payment: ${record.pickUpLatePaymentConfirmed ? `Confirmed ${LATE_PICK_UP_FEE_AMOUNT} to ${LATE_PICK_UP_PAYMENT_HANDLE}` : 'Not confirmed'}` : '',
+    record.pickUpLateReason ? `Pick-up receipt: ${record.pickUpLatePaymentReceipt ? 'Uploaded' : 'Missing'}` : '',
   ].filter(Boolean).join(' | ') || 'No late reason';
 
   return [
@@ -1171,7 +1299,7 @@ async function readRecords() {
       SELECT student_name, parent_name, arrival_date, arrival_time, timestamp,
         event_date, drop_off_parent_name, drop_off_time, drop_off_timestamp,
         drop_off_late_reason, pick_up_parent_name, pick_up_time, pick_up_timestamp,
-        pick_up_late_reason
+        pick_up_late_reason, pick_up_late_payment_confirmed, pick_up_late_payment_receipt
       FROM attendance_records
       ORDER BY timestamp ASC, id ASC
     `);
@@ -1191,6 +1319,8 @@ async function readRecords() {
       pickUpTime: record.pick_up_time,
       pickUpTimestamp: record.pick_up_timestamp ? new Date(record.pick_up_timestamp).toISOString() : '',
       pickUpLateReason: record.pick_up_late_reason,
+      pickUpLatePaymentConfirmed: record.pick_up_late_payment_confirmed,
+      pickUpLatePaymentReceipt: record.pick_up_late_payment_receipt,
       });
       return {
         ...normalized,
@@ -1234,7 +1364,7 @@ async function readRecords() {
         pickUpTime: values[6],
         pickUpTimestamp: values[7],
       });
-    } else if (values.length === 10) {
+    } else if (values.length >= 10) {
       record = normalizeRecord({
         studentName: values[0],
         eventDate: values[1],
@@ -1246,6 +1376,8 @@ async function readRecords() {
         pickUpTime: values[7],
         pickUpTimestamp: values[8],
         pickUpLateReason: values[9],
+        pickUpLatePaymentConfirmed: values[10] === 'true',
+        pickUpLatePaymentReceipt: values[11] || '',
       });
     } else if (values.length >= 6) {
       record = normalizeRecord({
@@ -1268,7 +1400,7 @@ async function readRecords() {
 function writeRecords(records) {
   ensureAttendanceFile();
   const csvLines = [
-    'StudentName,EventDate,DropOffParentName,DropOffTime,DropOffTimestamp,DropOffLateReason,PickUpParentName,PickUpTime,PickUpTimestamp,PickUpLateReason',
+    'StudentName,EventDate,DropOffParentName,DropOffTime,DropOffTimestamp,DropOffLateReason,PickUpParentName,PickUpTime,PickUpTimestamp,PickUpLateReason,PickUpLatePaymentConfirmed,PickUpLatePaymentReceipt',
     ...records.map((record) => {
       const normalized = normalizeRecord(record);
       return [
@@ -1282,6 +1414,8 @@ function writeRecords(records) {
         normalized.pickUpTime,
         normalized.pickUpTimestamp,
         normalized.pickUpLateReason,
+        normalized.pickUpLatePaymentConfirmed ? 'true' : 'false',
+        normalized.pickUpLatePaymentReceipt,
       ].map((value) => `"${escapeCsv(value)}"`).join(',');
     }),
   ];
@@ -1445,6 +1579,22 @@ app.get('/api/records', basicAuth, async (req, res) => {
   res.json(await readRecords());
 });
 
+app.get('/api/late-pickup-receipts/:fileName', basicAuth, (req, res) => {
+  const fileName = path.basename(req.params.fileName || '');
+  if (!fileName) {
+    return res.status(400).send('Receipt file is required');
+  }
+
+  const filePath = path.join(receiptDir, fileName);
+  const resolvedReceiptDir = path.resolve(receiptDir);
+  const resolvedFilePath = path.resolve(filePath);
+  if (!resolvedFilePath.startsWith(resolvedReceiptDir + path.sep) || !fs.existsSync(resolvedFilePath)) {
+    return res.status(404).send('Receipt not found');
+  }
+
+  return res.sendFile(resolvedFilePath);
+});
+
 app.delete('/api/records', basicAuth, async (req, res) => {
   const { studentName, eventDate, dropOffTimestamp, timestamp } = req.body;
   const recordTimestamp = dropOffTimestamp || timestamp;
@@ -1464,17 +1614,23 @@ app.delete('/api/records', basicAuth, async (req, res) => {
         ORDER BY id ASC
         LIMIT 1
       )
-      RETURNING id
+      RETURNING id, pick_up_late_payment_receipt
     `, [studentName, eventDate, recordTimestamp]);
 
     if (!result.rowCount) {
       return res.status(404).send('Record not found');
     }
 
+    deleteLatePickUpReceipt(result.rows[0].pick_up_late_payment_receipt);
     return res.json({ deleted: true });
   }
 
   const records = await readRecords();
+  const deletedRecord = records.find((record) => (
+    record.studentName === studentName
+    && record.eventDate === eventDate
+    && record.dropOffTimestamp === recordTimestamp
+  ));
   const remaining = records.filter((record) => !(
     record.studentName === studentName
     && record.eventDate === eventDate
@@ -1484,6 +1640,7 @@ app.delete('/api/records', basicAuth, async (req, res) => {
     return res.status(404).send('Record not found');
   }
 
+  deleteLatePickUpReceipt(deletedRecord?.pickUpLatePaymentReceipt);
   writeRecords(remaining);
   res.json({ deleted: true });
 });
