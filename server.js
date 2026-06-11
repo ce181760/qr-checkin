@@ -20,9 +20,16 @@ const SMTP_USER = process.env.SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || '';
 const SMTP_FROM = process.env.SMTP_FROM || `no-reply@${process.env.SMTP_HOST || 'localhost'}`;
 const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
+const SMTP_TIMEOUT_MS = parseInt(process.env.SMTP_TIMEOUT_MS, 10) || 10000;
+const REPORT_EMAIL = process.env.REPORT_EMAIL || '';
+const DAILY_REPORT_EMAIL = process.env.DAILY_REPORT_EMAIL || REPORT_EMAIL;
+const MONTHLY_REPORT_EMAIL = process.env.MONTHLY_REPORT_EMAIL || REPORT_EMAIL;
 const ARRIVAL_TIME_ZONE = 'America/New_York';
 const DEFAULT_LATE_DROP_OFF_AFTER = '08:36';
 const DEFAULT_LATE_PICK_UP_AFTER = '13:35';
+const DEFAULT_SENDER_NAME = 'Event Check-In';
+const MAX_REPORT_RECIPIENTS = 12;
+const DAILY_REPORT_SEND_AFTER_HOUR = parseInt(process.env.DAILY_REPORT_SEND_AFTER_HOUR, 10) || 18;
 const dbPool = DATABASE_URL ? new Pool({
   connectionString: DATABASE_URL,
   ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
@@ -106,6 +113,57 @@ function formatArrivalTime(date) {
 
 function isValidTimeValue(value) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
+}
+
+function isValidEmailValue(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+}
+
+function normalizeReportRecipients(value, fallbackEmail = '') {
+  let recipients = [];
+  const hasExplicitValue = Array.isArray(value) || (typeof value === 'string' && value.trim() !== '');
+
+  if (Array.isArray(value)) {
+    recipients = value;
+  } else if (typeof value === 'string' && value.trim().startsWith('[')) {
+    try {
+      recipients = JSON.parse(value);
+    } catch (error) {
+      recipients = [];
+    }
+  } else if (typeof value === 'string' && value.trim()) {
+    recipients = value.split(',');
+  }
+
+  if (!recipients.length && fallbackEmail && !hasExplicitValue) {
+    recipients = [fallbackEmail];
+  }
+
+  return [...new Set(recipients
+    .map((email) => String(email || '').trim())
+    .filter(Boolean))]
+    .slice(0, MAX_REPORT_RECIPIENTS);
+}
+
+function getReportRecipientsWithSender(profile = {}) {
+  const senderEmail = normalizeSenderSettings(profile).senderEmail;
+  return normalizeReportRecipients([
+    ...normalizeReportRecipients(profile.reportRecipients, profile.reportEmail || profile.email),
+    senderEmail,
+  ]);
+}
+
+function normalizeSenderSettings(profile = {}) {
+  const settings = profile.senderSettings || {};
+  const senderEmail = settings.senderEmail || profile.senderEmail || profile.sender_email || SMTP_USER || '';
+  const senderAppPassword = settings.senderAppPassword || profile.senderAppPassword || profile.sender_app_password || SMTP_PASS || '';
+  const senderName = settings.senderName || profile.senderName || profile.sender_name || DEFAULT_SENDER_NAME;
+
+  return {
+    senderEmail,
+    senderAppPassword,
+    senderName,
+  };
 }
 
 function normalizeScheduleSettings(settings = {}) {
@@ -500,6 +558,14 @@ app.get('/admin/account', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin-account.html'));
 });
 
+app.get('/admin/report-settings', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-report-settings.html'));
+});
+
+app.get('/admin/sender-settings', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-sender-settings.html'));
+});
+
 function ensureAdminFile() {
   ensureDir();
   if (!fs.existsSync(adminFile)) {
@@ -513,8 +579,15 @@ function getDefaultAdminProfile() {
     username: ADMIN_USER,
     password: ADMIN_PASS,
     email: ADMIN_EMAIL,
+    reportEmail: REPORT_EMAIL || ADMIN_EMAIL,
+    dailyReportEmail: DAILY_REPORT_EMAIL || REPORT_EMAIL || ADMIN_EMAIL,
+    monthlyReportEmail: MONTHLY_REPORT_EMAIL || REPORT_EMAIL || ADMIN_EMAIL,
+    reportRecipients: normalizeReportRecipients([DAILY_REPORT_EMAIL, MONTHLY_REPORT_EMAIL, REPORT_EMAIL], ADMIN_EMAIL),
+    senderSettings: normalizeSenderSettings(),
     lastPasswordChange: new Date().toISOString(),
     lastReminderSent: null,
+    lastDailyReportSent: null,
+    lastMonthlyReportSent: null,
     scheduleSettings: normalizeScheduleSettings(),
   };
 }
@@ -524,8 +597,18 @@ function normalizeAdminProfile(profile) {
     username: profile.username || ADMIN_USER,
     password: profile.password || ADMIN_PASS,
     email: profile.email || ADMIN_EMAIL,
+    reportEmail: profile.reportEmail || profile.report_email || REPORT_EMAIL || profile.email || ADMIN_EMAIL,
+    dailyReportEmail: profile.dailyReportEmail || profile.daily_report_email || profile.reportEmail || profile.report_email || DAILY_REPORT_EMAIL || REPORT_EMAIL || profile.email || ADMIN_EMAIL,
+    monthlyReportEmail: profile.monthlyReportEmail || profile.monthly_report_email || profile.reportEmail || profile.report_email || MONTHLY_REPORT_EMAIL || REPORT_EMAIL || profile.email || ADMIN_EMAIL,
+    reportRecipients: normalizeReportRecipients(
+      profile.reportRecipients || profile.report_recipients,
+      profile.reportEmail || profile.report_email || REPORT_EMAIL || profile.email || ADMIN_EMAIL
+    ),
+    senderSettings: normalizeSenderSettings(profile),
     lastPasswordChange: profile.lastPasswordChange || profile.last_password_change || profile.lastPasswordReminder || new Date().toISOString(),
     lastReminderSent: profile.lastReminderSent || profile.last_reminder_sent || profile.lastPasswordReminder || null,
+    lastDailyReportSent: profile.lastDailyReportSent || profile.last_daily_report_sent || null,
+    lastMonthlyReportSent: profile.lastMonthlyReportSent || profile.last_monthly_report_sent || null,
     scheduleSettings: normalizeScheduleSettings({
       lateDropOffAfter: profile.lateDropOffAfter,
       latePickUpAfter: profile.latePickUpAfter,
@@ -547,12 +630,30 @@ async function ensureAdminTable() {
       username TEXT NOT NULL,
       password TEXT NOT NULL,
       email TEXT NOT NULL,
+      report_email TEXT,
+      daily_report_email TEXT,
+      monthly_report_email TEXT,
+      report_recipients TEXT,
+      sender_email TEXT,
+      sender_app_password TEXT,
+      sender_name TEXT,
       last_password_change TIMESTAMPTZ NOT NULL,
       last_reminder_sent TIMESTAMPTZ,
+      last_daily_report_sent TEXT,
+      last_monthly_report_sent TEXT,
       late_drop_off_after TEXT,
       late_pick_up_after TEXT
     )
   `);
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS report_email TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS daily_report_email TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS monthly_report_email TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS report_recipients TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS sender_email TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS sender_app_password TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS sender_name TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS last_daily_report_sent TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS last_monthly_report_sent TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS late_drop_off_after TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS late_pick_up_after TEXT');
   adminTableReady = true;
@@ -590,24 +691,45 @@ async function writeAdminProfile(profile) {
     await ensureAdminTable();
     await dbPool.query(`
       INSERT INTO admin_profile (
-        id, username, password, email, last_password_change, last_reminder_sent,
+        id, username, password, email, report_email, daily_report_email, monthly_report_email,
+        report_recipients, sender_email, sender_app_password, sender_name,
+        last_password_change, last_reminder_sent,
+        last_daily_report_sent, last_monthly_report_sent,
         late_drop_off_after, late_pick_up_after
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       ON CONFLICT (id) DO UPDATE SET
         username = EXCLUDED.username,
         password = EXCLUDED.password,
         email = EXCLUDED.email,
+        report_email = EXCLUDED.report_email,
+        daily_report_email = EXCLUDED.daily_report_email,
+        monthly_report_email = EXCLUDED.monthly_report_email,
+        report_recipients = EXCLUDED.report_recipients,
+        sender_email = EXCLUDED.sender_email,
+        sender_app_password = EXCLUDED.sender_app_password,
+        sender_name = EXCLUDED.sender_name,
         last_password_change = EXCLUDED.last_password_change,
         last_reminder_sent = EXCLUDED.last_reminder_sent,
+        last_daily_report_sent = EXCLUDED.last_daily_report_sent,
+        last_monthly_report_sent = EXCLUDED.last_monthly_report_sent,
         late_drop_off_after = EXCLUDED.late_drop_off_after,
         late_pick_up_after = EXCLUDED.late_pick_up_after
     `, [
       profile.username,
       profile.password,
       profile.email,
+      profile.reportEmail || profile.email,
+      profile.dailyReportEmail || profile.reportEmail || profile.email,
+      profile.monthlyReportEmail || profile.reportEmail || profile.email,
+      JSON.stringify(normalizeReportRecipients(profile.reportRecipients)),
+      normalizeSenderSettings(profile).senderEmail,
+      normalizeSenderSettings(profile).senderAppPassword,
+      normalizeSenderSettings(profile).senderName,
       profile.lastPasswordChange || new Date().toISOString(),
       profile.lastReminderSent || null,
+      profile.lastDailyReportSent || null,
+      profile.lastMonthlyReportSent || null,
       normalizeScheduleSettings(profile.scheduleSettings).lateDropOffAfter,
       normalizeScheduleSettings(profile.scheduleSettings).latePickUpAfter,
     ]);
@@ -640,21 +762,36 @@ function isReminderDue(profile) {
   return (Date.now() - latest.getTime()) >= 30 * 24 * 60 * 60 * 1000;
 }
 
-function getMailTransport() {
-  if (!SMTP_HOST) {
+function getMailTransport(profile = {}) {
+  const senderSettings = normalizeSenderSettings(profile);
+  const host = SMTP_HOST || 'smtp.gmail.com';
+  const authUser = senderSettings.senderEmail || SMTP_USER;
+  const authPass = senderSettings.senderAppPassword || SMTP_PASS;
+
+  if (!authUser || !authPass || authPass === 'your-app-password' || authPass === 'your-sender-app-password') {
     return null;
   }
 
   return nodemailer.createTransport({
-    host: SMTP_HOST,
+    host,
     port: SMTP_PORT,
     secure: SMTP_SECURE,
-    auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+    auth: { user: authUser, pass: authPass },
+    connectionTimeout: SMTP_TIMEOUT_MS,
+    greetingTimeout: SMTP_TIMEOUT_MS,
+    socketTimeout: SMTP_TIMEOUT_MS,
   });
 }
 
+function getMailFrom(profile = {}) {
+  const senderSettings = normalizeSenderSettings(profile);
+  const senderEmail = senderSettings.senderEmail || SMTP_USER;
+  const senderName = senderSettings.senderName || DEFAULT_SENDER_NAME;
+  return senderEmail ? `${senderName} <${senderEmail}>` : SMTP_FROM;
+}
+
 async function sendPasswordReminder(profile) {
-  const transporter = getMailTransport();
+  const transporter = getMailTransport(profile);
   const subject = 'Admin password reminder';
   const text = `Hello ${profile.username},\n\nThis is a reminder to change your admin password. It has been one month since the last reminder.\n\nIf you have already changed your password, you can ignore this message.\n\nThanks.`;
 
@@ -664,7 +801,7 @@ async function sendPasswordReminder(profile) {
   }
 
   await transporter.sendMail({
-    from: SMTP_FROM,
+    from: getMailFrom(profile),
     to: profile.email,
     subject,
     text,
@@ -674,7 +811,7 @@ async function sendPasswordReminder(profile) {
 }
 
 async function sendLateAttendanceEmail(details) {
-  const transporter = getMailTransport();
+  const transporter = getMailTransport(details.profile);
   if (!transporter) {
     console.log('SMTP not configured. Late attendance email not sent.');
     return false;
@@ -692,7 +829,7 @@ async function sendLateAttendanceEmail(details) {
   ].join('\n');
 
   await transporter.sendMail({
-    from: SMTP_FROM,
+    from: getMailFrom(details.profile),
     to: details.profile.email,
     subject: `${actionLabel}: ${details.studentName}`,
     text,
@@ -706,6 +843,286 @@ async function trySendLateAttendanceEmail(details) {
     await sendLateAttendanceEmail(details);
   } catch (error) {
     console.error('Failed to send late attendance email:', error.message || error);
+  }
+}
+
+function formatDailyReportRecord(record) {
+  const lateLabels = (record.timingFlags || []).join(', ') || 'None';
+  const dropOff = record.dropOffTimestamp
+    ? `${record.dropOffParentName || 'Unknown parent'} at ${record.dropOffTime || formatArrivalTime(new Date(record.dropOffTimestamp))}`
+    : 'Not recorded';
+  const pickUp = record.pickUpTimestamp
+    ? `${record.pickUpParentName || 'Unknown parent'} at ${record.pickUpTime || formatArrivalTime(new Date(record.pickUpTimestamp))}`
+    : 'Not recorded';
+  const reasons = [
+    record.dropOffLateReason ? `Drop-off reason: ${record.dropOffLateReason}` : '',
+    record.pickUpLateReason ? `Pick-up reason: ${record.pickUpLateReason}` : '',
+  ].filter(Boolean).join(' | ') || 'No late reason';
+
+  return [
+    `Student: ${record.studentName || 'Unknown student'}`,
+    `Status: ${record.status || getSessionStatus(record)}`,
+    `Late labels: ${lateLabels}`,
+    `Drop-off: ${dropOff}`,
+    `Pick-up: ${pickUp}`,
+    reasons,
+  ].join('\n');
+}
+
+function getLocalDateParts(date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: ARRIVAL_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day),
+  };
+}
+
+function getPreviousMonthReportPeriod(referenceDate = new Date()) {
+  const current = getLocalDateParts(referenceDate);
+  const year = current.month === 1 ? current.year - 1 : current.year;
+  const month = current.month === 1 ? 12 : current.month - 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const monthText = String(month).padStart(2, '0');
+  const nextMonthText = String(nextMonth).padStart(2, '0');
+  const label = new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(Date.UTC(year, month - 1, 1)));
+
+  return {
+    key: `${year}-${monthText}`,
+    label,
+    startDate: `${year}-${monthText}-01`,
+    endDate: `${nextYear}-${nextMonthText}-01`,
+  };
+}
+
+function filterRecordsForPeriod(records, period) {
+  return records.filter((record) => {
+    const eventDate = record.eventDate || record.arrivalDate;
+    return eventDate >= period.startDate && eventDate < period.endDate;
+  });
+}
+
+function escapePdfText(value) {
+  return String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)');
+}
+
+function createReportPdfBuffer(title, text) {
+  const lines = String(text || '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .flatMap((line) => {
+      if (!line) return [''];
+      const chunks = [];
+      for (let index = 0; index < line.length; index += 95) {
+        chunks.push(line.slice(index, index + 95));
+      }
+      return chunks;
+    });
+  const pages = [];
+  const linesPerPage = 46;
+
+  for (let index = 0; index < lines.length || index === 0; index += linesPerPage) {
+    pages.push(lines.slice(index, index + linesPerPage));
+  }
+
+  const objects = [];
+  const addObject = (content) => {
+    objects.push(content);
+    return objects.length;
+  };
+  const catalogId = addObject('');
+  const pagesId = addObject('');
+  const fontId = addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const pageIds = [];
+
+  pages.forEach((pageLines) => {
+    const textCommands = [
+      'BT',
+      '/F1 11 Tf',
+      '50 760 Td',
+      '14 TL',
+      `(${escapePdfText(title)}) Tj`,
+      'T*',
+      'T*',
+      ...pageLines.map((line) => `(${escapePdfText(line)}) Tj T*`),
+      'ET',
+    ].join('\n');
+    const contentId = addObject(`<< /Length ${Buffer.byteLength(textCommands, 'utf8')} >>\nstream\n${textCommands}\nendstream`);
+    const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+    pageIds.push(pageId);
+  });
+
+  objects[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
+  objects[pagesId - 1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  objects.forEach((content, index) => {
+    offsets.push(Buffer.byteLength(pdf, 'utf8'));
+    pdf += `${index + 1} 0 obj\n${content}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(pdf, 'utf8');
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let index = 1; index < offsets.length; index += 1) {
+    pdf += `${String(offsets[index]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+
+  return Buffer.from(pdf, 'utf8');
+}
+
+async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new Date())) {
+  const transporter = getMailTransport(profile);
+  const recipients = getReportRecipientsWithSender(profile);
+  if (!transporter) {
+    console.log('SMTP not configured. Daily record report email not sent.');
+    return false;
+  }
+
+  if (!recipients.length || recipients.some((email) => !isValidEmailValue(email))) {
+    const error = new Error('Enter a valid receiver email.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const records = (await readRecords()).filter((record) => (
+    (record.eventDate || record.arrivalDate) === reportDate
+  ));
+  const reportBody = records.length
+    ? records.map(formatDailyReportRecord).join('\n\n---\n\n')
+    : 'No attendance records were found for this date.';
+  const text = [
+    `Daily attendance report for ${reportDate}`,
+    '',
+    `Total records: ${records.length}`,
+    '',
+    reportBody,
+  ].join('\n');
+
+  await transporter.sendMail({
+    from: getMailFrom(profile),
+    to: recipients,
+    subject: `Daily attendance report - ${reportDate}`,
+    text,
+    attachments: [{
+      filename: `daily-attendance-report-${reportDate}.pdf`,
+      content: createReportPdfBuffer(`Daily attendance report - ${reportDate}`, text),
+      contentType: 'application/pdf',
+    }],
+  });
+
+  return true;
+}
+
+async function sendMonthlyRecordReport(profile, period = getPreviousMonthReportPeriod()) {
+  const transporter = getMailTransport(profile);
+  const recipients = getReportRecipientsWithSender(profile);
+  if (!transporter) {
+    console.log('SMTP not configured. Monthly record report email not sent.');
+    return false;
+  }
+
+  if (!recipients.length || recipients.some((email) => !isValidEmailValue(email))) {
+    const error = new Error('Enter a valid receiver email.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const records = filterRecordsForPeriod(await readRecords(), period);
+  const lateRecordCount = records.filter((record) => (
+    record.dropOffLateReason || record.pickUpLateReason || (record.timingFlags || []).length
+  )).length;
+  const reportBody = records.length
+    ? records.map(formatDailyReportRecord).join('\n\n---\n\n')
+    : 'No attendance records were found for this month.';
+  const text = [
+    `Monthly attendance report for ${period.label}`,
+    '',
+    `Total records: ${records.length}`,
+    `Records with late activity: ${lateRecordCount}`,
+    '',
+    reportBody,
+  ].join('\n');
+
+  await transporter.sendMail({
+    from: getMailFrom(profile),
+    to: recipients,
+    subject: `Monthly attendance report - ${period.label}`,
+    text,
+    attachments: [{
+      filename: `monthly-attendance-report-${period.key}.pdf`,
+      content: createReportPdfBuffer(`Monthly attendance report - ${period.label}`, text),
+      contentType: 'application/pdf',
+    }],
+  });
+
+  return true;
+}
+
+async function checkAndSendMonthlyReport() {
+  const today = getLocalDateParts(new Date());
+  if (today.day !== 1) {
+    return;
+  }
+
+  const period = getPreviousMonthReportPeriod();
+  const profile = await readAdminProfile();
+  if (profile.lastMonthlyReportSent === period.key) {
+    return;
+  }
+
+  try {
+    const sent = await sendMonthlyRecordReport(profile, period);
+    if (sent) {
+      profile.lastMonthlyReportSent = period.key;
+      await writeAdminProfile(profile);
+      console.log(`Monthly report for ${period.label} sent to ${getReportRecipientsWithSender(profile).join(', ')}`);
+    }
+  } catch (error) {
+    console.error('Failed to send monthly report:', error.message || error);
+  }
+}
+
+async function checkAndSendDailyReport() {
+  const now = new Date();
+  const hourParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: ARRIVAL_TIME_ZONE,
+    hour: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+  const hour = Number(Object.fromEntries(hourParts.map((part) => [part.type, part.value])).hour);
+  if (hour < DAILY_REPORT_SEND_AFTER_HOUR) {
+    return;
+  }
+
+  const reportDate = formatArrivalDate(now);
+  const profile = await readAdminProfile();
+  if (profile.lastDailyReportSent === reportDate) {
+    return;
+  }
+
+  try {
+    const sent = await sendDailyRecordReport(profile, reportDate);
+    if (sent) {
+      profile.lastDailyReportSent = reportDate;
+      await writeAdminProfile(profile);
+      console.log(`Daily report for ${reportDate} sent to ${getReportRecipientsWithSender(profile).join(', ')}`);
+    }
+  } catch (error) {
+    console.error('Failed to send daily report:', error.message || error);
   }
 }
 
@@ -905,8 +1322,14 @@ app.post('/api/admin/profile', basicAuth, async (req, res) => {
     username,
     password,
     email,
+    reportEmail: currentProfile.reportEmail || email,
+    dailyReportEmail: currentProfile.dailyReportEmail || currentProfile.reportEmail || email,
+    monthlyReportEmail: currentProfile.monthlyReportEmail || currentProfile.reportEmail || email,
+    reportRecipients: currentProfile.reportRecipients || normalizeReportRecipients(currentProfile.reportEmail || email),
+    senderSettings: currentProfile.senderSettings || normalizeSenderSettings(currentProfile),
     lastPasswordChange: new Date().toISOString(),
     lastReminderSent: currentProfile.lastReminderSent || null,
+    lastMonthlyReportSent: currentProfile.lastMonthlyReportSent || null,
     scheduleSettings: currentProfile.scheduleSettings,
   };
   await writeAdminProfile(profile);
@@ -931,6 +1354,91 @@ app.post('/api/admin/schedule-settings', basicAuth, async (req, res) => {
   });
 
   res.json(scheduleSettings);
+});
+
+app.get('/api/admin/report-settings', basicAuth, async (req, res) => {
+  const profile = await readAdminProfile();
+  res.json({
+    reportRecipients: normalizeReportRecipients(profile.reportRecipients, profile.reportEmail || profile.email),
+    maxReportRecipients: MAX_REPORT_RECIPIENTS,
+  });
+});
+
+app.post('/api/admin/report-settings', basicAuth, async (req, res) => {
+  const rawRecipients = Array.isArray(req.body.reportRecipients)
+    ? req.body.reportRecipients
+    : normalizeReportRecipients(req.body.reportRecipients || req.body.reportEmail);
+  if (rawRecipients.length > MAX_REPORT_RECIPIENTS) {
+    return res.status(400).json({ error: `You can add up to ${MAX_REPORT_RECIPIENTS} report receivers.` });
+  }
+
+  const reportRecipients = normalizeReportRecipients(req.body.reportRecipients || req.body.reportEmail);
+  if (reportRecipients.some((email) => !isValidEmailValue(email))) {
+    return res.status(400).json({ error: 'Every report receiver must be a valid email address.' });
+  }
+
+  const profile = await readAdminProfile();
+  await writeAdminProfile({
+    ...profile,
+    reportEmail: reportRecipients[0] || profile.reportEmail,
+    dailyReportEmail: reportRecipients[0] || profile.dailyReportEmail,
+    monthlyReportEmail: reportRecipients[0] || profile.monthlyReportEmail,
+    reportRecipients,
+  });
+
+  res.json({ reportRecipients, maxReportRecipients: MAX_REPORT_RECIPIENTS });
+});
+
+app.get('/api/admin/sender-settings', basicAuth, async (req, res) => {
+  const profile = await readAdminProfile();
+  const senderSettings = normalizeSenderSettings(profile);
+  res.json({
+    senderEmail: senderSettings.senderEmail,
+    senderName: senderSettings.senderName,
+    hasSenderAppPassword: Boolean(senderSettings.senderAppPassword && !senderSettings.senderAppPassword.startsWith('your-')),
+  });
+});
+
+app.post('/api/admin/sender-settings', basicAuth, async (req, res) => {
+  const senderEmail = String(req.body.senderEmail || '').trim();
+  const senderAppPassword = String(req.body.senderAppPassword || '').trim();
+  const senderName = String(req.body.senderName || DEFAULT_SENDER_NAME).trim() || DEFAULT_SENDER_NAME;
+
+  if (!isValidEmailValue(senderEmail)) {
+    return res.status(400).json({ error: 'Sender email must be a valid email address.' });
+  }
+
+  if (!senderAppPassword) {
+    return res.status(400).json({ error: 'Sender app password is required.' });
+  }
+
+  const profile = await readAdminProfile();
+  await writeAdminProfile({
+    ...profile,
+    senderSettings: {
+      senderEmail,
+      senderAppPassword,
+      senderName,
+    },
+  });
+
+  res.json({ senderEmail, senderName, hasSenderAppPassword: true });
+});
+
+app.post('/api/admin/daily-report/email', basicAuth, async (req, res) => {
+  try {
+    const profile = await readAdminProfile();
+    const sent = await sendDailyRecordReport(profile);
+
+    if (!sent) {
+      return res.status(503).json({ error: 'Sender settings are not configured. Add sender email and app password before emailing reports.' });
+    }
+
+    return res.json({ message: 'Daily report sent.' });
+  } catch (error) {
+    const statusCode = error.statusCode || 500;
+    return res.status(statusCode).json({ error: error.message || 'Unable to email daily report' });
+  }
 });
 
 app.get('/api/records', basicAuth, async (req, res) => {
@@ -988,5 +1496,9 @@ app.listen(PORT, async () => {
   console.log(`Admin storage: ${dbPool ? 'database' : adminFile}`);
 
   await checkAndSendPasswordReminder();
+  await checkAndSendDailyReport();
+  await checkAndSendMonthlyReport();
   setInterval(checkAndSendPasswordReminder, 24 * 60 * 60 * 1000);
+  setInterval(checkAndSendDailyReport, 60 * 60 * 1000);
+  setInterval(checkAndSendMonthlyReport, 24 * 60 * 60 * 1000);
 });
