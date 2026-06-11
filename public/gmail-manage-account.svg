@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="100" viewBox="0 0 420 100" role="img" aria-label="Manage your Google Account button">
+  <rect width="420" height="100" fill="#eef4fb"/>
+  <rect x="70" y="26" width="280" height="48" rx="24" fill="#f8fafc" stroke="#64748b"/>
+  <text x="104" y="56" font-family="Arial, sans-serif" font-size="16" fill="#0b57d0">Manage your Google Account</text>
+</svg>

@@ -119,6 +119,14 @@ Late reasons appear in the Print / Save PDF output. They do not appear in the ma
 
 If SMTP is configured, the app also emails the admin when a late reason is submitted.
 
+## Automatic Report Emails
+
+From the Admin Account page, staff can open **Sender Settings** to configure the one email account that sends reports. Staff can also open **Report Receivers** to add up to 12 receiver emails. The same receiver list gets daily and monthly reports.
+
+Reports are sent automatically. Daily reports send once per day after the configured end-of-day hour, and monthly reports send the previous month's report on the first day of each month.
+
+Automatic report emails include a plain text message and a PDF attachment. Reports include late labels and any late explanations saved on the attendance records.
+
 ## Print / Save PDF
 
 From the admin dashboard, use:
@@ -215,6 +223,23 @@ That preserves:
 - Late reasons
 - Late cutoff settings
 - Admin account changes
+- Report receivers
+- Sender email settings
+- Automatic daily and monthly report history
+
+In Render, add a persistent disk and mount it at:
+
+```text
+/var/data
+```
+
+Then add this environment variable:
+
+```text
+DATA_DIR=/var/data
+```
+
+Without a persistent disk or Postgres database, Render can remove saved admin changes during a redeploy or restart.
 
 The app also supports Postgres:
 
@@ -235,21 +260,26 @@ Common settings:
 ADMIN_USER=admin
 ADMIN_PASS=admin123
 ADMIN_EMAIL=admin@example.com
+REPORT_EMAIL=reports@example.com
 DATA_DIR=/var/data
 DATABASE_URL=
 DATABASE_SSL=false
 ```
 
-SMTP settings for email reminders and late reason emails:
+SMTP sender settings for email reminders, late reason emails, daily reports, and monthly reports:
 
 ```text
-SMTP_HOST=smtp.example.com
+SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
-SMTP_USER=your-smtp-user
-SMTP_PASS=your-smtp-pass
-SMTP_FROM=Event Check-In <noreply@example.com>
+SMTP_USER=PrincetonReport@gmail.com
+SMTP_PASS=your-sender-app-password
+SMTP_FROM=Event Check-In <PrincetonReport@gmail.com>
 SMTP_SECURE=false
+SMTP_TIMEOUT_MS=10000
+DAILY_REPORT_SEND_AFTER_HOUR=18
 ```
+
+Use a dedicated sender email account for SMTP, not a personal email account. The sender account can be configured from **Admin Account** > **Sender Settings**. Report receiver emails are configured from **Admin Account** > **Report Receivers**.
 
 If SMTP is not configured, attendance still works. The app logs that email was skipped.
 

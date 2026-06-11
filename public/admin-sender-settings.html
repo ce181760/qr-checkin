@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sender Settings</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/admin-styles.css" />
+  <script src="/admin-sender-settings.js" defer></script>
+</head>
+<body>
+  <main>
+    <div id="loginBox">
+      <img class="site-logo" src="/school-logo.jpeg" alt="School logo" />
+      <h1>Admin Login</h1>
+      <form id="loginForm" onsubmit="login(); return false;">
+        <label for="username">Username</label>
+        <input id="username" type="text" required />
+
+        <label for="password">Password</label>
+        <input id="password" type="password" required />
+
+        <button type="submit">Login</button>
+      </form>
+      <div id="error" style="color: red; margin-top: 0.5rem; text-align: center;"></div>
+    </div>
+
+    <div id="senderSettingsPage" style="display: none;">
+      <img class="site-logo site-logo-dashboard" src="/school-logo.jpeg" alt="School logo" />
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <h1>Sender Settings</h1>
+        <div>
+          <button type="button" onclick="window.location.href='/admin/account'">Back to Account</button>
+          <button type="button" onclick="logout()">Logout</button>
+        </div>
+      </div>
+
+      <form id="senderSettingsForm" onsubmit="saveSenderSettings(); return false;">
+        <label for="senderName">Sender name</label>
+        <input id="senderName" type="text" required />
+
+        <label for="senderEmail">Sender email</label>
+        <input id="senderEmail" type="email" autocomplete="email" required />
+
+        <label for="senderAppPassword">Sender app password</label>
+        <input id="senderAppPassword" type="password" autocomplete="new-password" required />
+        <div style="margin: 0.25rem 0 1rem; color: #666;">Enter the app password with no spaces.</div>
+
+        <button type="submit">Save Sender</button>
+      </form>
+
+      <section style="margin-top: 1.5rem;">
+        <h2>App Password Help (Simple Version)</h2>
+        <p><strong>Important:</strong> Use an <strong>App Password</strong>, not your regular email password.</p>
+
+        <h3>Gmail</h3>
+        <ol>
+          <li>Sign in to Gmail.</li>
+          <li>Go to <strong>Google Account &rarr; Security</strong>.</li>
+          <li>Turn on 2-Step Verification.</li>
+          <li>Click <strong>App Passwords</strong>.</li>
+          <li>Create a new password for <strong>Mail</strong>.</li>
+          <li>Copy the password and paste it here.</li>
+          <li>If the password has spaces, remove the spaces.</li>
+        </ol>
+        <figure>
+          <img src="/gmail-account-menu.svg" alt="Gmail account menu" style="max-width: 100%; height: auto;" />
+        </figure>
+        <figure>
+          <img src="/gmail-manage-account.svg" alt="Gmail manage your Google Account button" style="max-width: 100%; height: auto;" />
+        </figure>
+        <figure>
+          <img src="/gmail-app-password-search.svg" alt="Google Account search result for App passwords" style="max-width: 100%; height: auto;" />
+        </figure>
+        <figure>
+          <img src="/gmail-app-password-create.svg" alt="Google App passwords create page" style="max-width: 100%; height: auto;" />
+        </figure>
+
+        <h3>AOL</h3>
+        <ol>
+          <li>Sign in to AOL.</li>
+          <li>Open <strong>Account Security</strong>.</li>
+          <li>Click <strong>Generate App Password</strong>.</li>
+          <li>Choose <strong>Mail</strong>.</li>
+          <li>Copy the password, and make sure no spacing.</li>
+        </ol>
+        <figure>
+          <img src="/aol-account-menu.svg" alt="AOL account menu" style="max-width: 100%; height: auto;" />
+        </figure>
+        <figure>
+          <img src="/aol-security-tab.svg" alt="AOL Security tab" style="max-width: 100%; height: auto;" />
+        </figure>
+        <figure>
+          <img src="/aol-generate-app-password.svg" alt="AOL generate app password section" style="max-width: 100%; height: auto;" />
+        </figure>
+
+        <h3>Yahoo</h3>
+        <ol>
+          <li>Sign in to Yahoo.</li>
+          <li>Open <strong>Account Security</strong>.</li>
+          <li>Click <strong>Generate App Password</strong>.</li>
+          <li>Choose <strong>Mail</strong>.</li>
+          <li>Copy the password and paste it here.</li>
+        </ol>
+
+        <h3>Other Email Providers</h3>
+        <ol>
+          <li>Search for <strong>"App Password"</strong> or <strong>"SMTP Password"</strong> for your email provider.</li>
+          <li>If you cannot find one, contact your email provider for SMTP settings.</li>
+          <li>Use your email address and the app password here.</li>
+        </ol>
+      </section>
+
+      <div id="senderSettingsMessage" style="margin-top: 1rem; min-height: 1.2rem;"></div>
+    </div>
+  </main>
+</body>
+</html>
