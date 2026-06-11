@@ -31,6 +31,20 @@
         <label for="lateReason">Reason for being late</label>
         <textarea id="lateReason" name="lateReason" rows="4"></textarea>
       </div>
+      <div id="latePaymentGroup" class="late-payment-group" hidden>
+        <p class="late-payment-instructions">
+          Late pick-up requires a $10 payment by Venmo to <strong>@phcs1166</strong>.
+        </p>
+        <a class="venmo-payment-link" href="https://venmo.com/phcs1166?txn=pay&amp;amount=10" target="_blank" rel="noopener">
+          Pay $10 with Venmo
+        </a>
+        <label for="latePaymentReceipt">Receipt screenshot</label>
+        <input id="latePaymentReceipt" name="latePaymentReceipt" type="file" accept="image/*" />
+        <label class="checkbox-field" for="latePaymentConfirmed">
+          <input id="latePaymentConfirmed" name="latePaymentConfirmed" type="checkbox" />
+          I paid the $10 late pick-up fee to @phcs1166 and uploaded the receipt.
+        </label>
+      </div>
       <button type="submit">Submit</button>
     </form>
     <div id="message"></div>

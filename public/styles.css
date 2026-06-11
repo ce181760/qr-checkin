@@ -87,6 +87,7 @@ label {
 input[type="text"],
 input[type="search"],
 input[type="time"],
+input[type="file"],
 textarea {
   width: 100%;
   padding: 0.9rem 1rem;
@@ -105,6 +106,51 @@ textarea {
   gap: 0.5rem;
 }
 
+.late-payment-group {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff7ed;
+}
+
+.late-payment-instructions {
+  margin: 0;
+  color: #7c2d12;
+}
+
+.venmo-payment-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0.8rem 1rem;
+  border-radius: 8px;
+  background: #008cff;
+  color: #ffffff;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.venmo-payment-link:hover {
+  background: #0074d4;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  line-height: 1.35;
+}
+
+.checkbox-field input {
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: 0.1rem;
+  flex: 0 0 auto;
+}
+
 button {
   padding: 0.95rem 1.25rem;
   border: none;
@@ -117,6 +163,22 @@ button {
 
 button:hover {
   background: #1d4ed8;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #2563eb;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.link-button:hover {
+  background: transparent;
+  color: #1d4ed8;
 }
 
 table {
