@@ -40,6 +40,12 @@ const RECEIPT_MIME_EXTENSIONS = {
 };
 const MAX_REPORT_RECIPIENTS = 12;
 const DAILY_REPORT_SEND_AFTER_HOUR = parseInt(process.env.DAILY_REPORT_SEND_AFTER_HOUR, 10) || 18;
+const DEFAULT_DAILY_REPORT_SETTINGS = {
+  reportMode: 'combined',
+  combinedReportTime: `${String(DAILY_REPORT_SEND_AFTER_HOUR).padStart(2, '0')}:00`,
+  dropOffReportTime: '10:30',
+  pickUpReportTime: '18:00',
+};
 const dbPool = DATABASE_URL ? new Pool({
   connectionString: DATABASE_URL,
   ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
@@ -194,6 +200,21 @@ function normalizeScheduleSettings(settings = {}) {
   return { lateDropOffAfter, latePickUpAfter };
 }
 
+function normalizeDailyReportSettings(settings = {}) {
+  const source = settings || {};
+  const reportMode = source.reportMode || source.report_mode;
+  const combinedReportTime = source.combinedReportTime || source.combined_report_time || source.dailyReportTime || source.daily_report_time;
+  const dropOffReportTime = source.dropOffReportTime || source.drop_off_report_time;
+  const pickUpReportTime = source.pickUpReportTime || source.pick_up_report_time;
+
+  return {
+    reportMode: reportMode === 'separate' ? 'separate' : 'combined',
+    combinedReportTime: isValidTimeValue(combinedReportTime) ? combinedReportTime : DEFAULT_DAILY_REPORT_SETTINGS.combinedReportTime,
+    dropOffReportTime: isValidTimeValue(dropOffReportTime) ? dropOffReportTime : DEFAULT_DAILY_REPORT_SETTINGS.dropOffReportTime,
+    pickUpReportTime: isValidTimeValue(pickUpReportTime) ? pickUpReportTime : DEFAULT_DAILY_REPORT_SETTINGS.pickUpReportTime,
+  };
+}
+
 function timeToMinutes(value) {
   if (!isValidTimeValue(value)) {
     return null;
@@ -217,6 +238,22 @@ function timestampToLocalMinutes(timestamp) {
   }).formatToParts(date);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return (Number(values.hour) * 60) + Number(values.minute);
+}
+
+function getLocalMinutes(date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: ARRIVAL_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return (Number(values.hour) * 60) + Number(values.minute);
+}
+
+function shouldSendScheduledReport(now, reportTime) {
+  const targetMinutes = timeToMinutes(reportTime);
+  return targetMinutes !== null && getLocalMinutes(now) >= targetMinutes;
 }
 
 function getTimingFlags(record, scheduleSettings) {
@@ -711,8 +748,11 @@ function getDefaultAdminProfile() {
     lastPasswordChange: new Date().toISOString(),
     lastReminderSent: null,
     lastDailyReportSent: null,
+    lastDailyDropOffReportSent: null,
+    lastDailyPickUpReportSent: null,
     lastMonthlyReportSent: null,
     scheduleSettings: normalizeScheduleSettings(),
+    dailyReportSettings: normalizeDailyReportSettings(),
   };
 }
 
@@ -732,6 +772,8 @@ function normalizeAdminProfile(profile) {
     lastPasswordChange: profile.lastPasswordChange || profile.last_password_change || profile.lastPasswordReminder || new Date().toISOString(),
     lastReminderSent: profile.lastReminderSent || profile.last_reminder_sent || profile.lastPasswordReminder || null,
     lastDailyReportSent: profile.lastDailyReportSent || profile.last_daily_report_sent || null,
+    lastDailyDropOffReportSent: profile.lastDailyDropOffReportSent || profile.last_daily_drop_off_report_sent || null,
+    lastDailyPickUpReportSent: profile.lastDailyPickUpReportSent || profile.last_daily_pick_up_report_sent || null,
     lastMonthlyReportSent: profile.lastMonthlyReportSent || profile.last_monthly_report_sent || null,
     scheduleSettings: normalizeScheduleSettings({
       lateDropOffAfter: profile.lateDropOffAfter,
@@ -739,6 +781,19 @@ function normalizeAdminProfile(profile) {
       late_drop_off_after: profile.late_drop_off_after,
       late_pick_up_after: profile.late_pick_up_after,
       ...(profile.scheduleSettings || {}),
+    }),
+    dailyReportSettings: normalizeDailyReportSettings({
+      reportMode: profile.reportMode,
+      report_mode: profile.report_mode,
+      combinedReportTime: profile.combinedReportTime,
+      combined_report_time: profile.combined_report_time,
+      dailyReportTime: profile.dailyReportTime,
+      daily_report_time: profile.daily_report_time,
+      dropOffReportTime: profile.dropOffReportTime,
+      drop_off_report_time: profile.drop_off_report_time,
+      pickUpReportTime: profile.pickUpReportTime,
+      pick_up_report_time: profile.pick_up_report_time,
+      ...(profile.dailyReportSettings || {}),
     }),
   };
 }
@@ -764,9 +819,15 @@ async function ensureAdminTable() {
       last_password_change TIMESTAMPTZ NOT NULL,
       last_reminder_sent TIMESTAMPTZ,
       last_daily_report_sent TEXT,
+      last_daily_drop_off_report_sent TEXT,
+      last_daily_pick_up_report_sent TEXT,
       last_monthly_report_sent TEXT,
       late_drop_off_after TEXT,
-      late_pick_up_after TEXT
+      late_pick_up_after TEXT,
+      daily_report_mode TEXT,
+      combined_report_time TEXT,
+      drop_off_report_time TEXT,
+      pick_up_report_time TEXT
     )
   `);
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS report_email TEXT');
@@ -777,9 +838,15 @@ async function ensureAdminTable() {
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS sender_app_password TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS sender_name TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS last_daily_report_sent TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS last_daily_drop_off_report_sent TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS last_daily_pick_up_report_sent TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS last_monthly_report_sent TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS late_drop_off_after TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS late_pick_up_after TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS daily_report_mode TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS combined_report_time TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS drop_off_report_time TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS pick_up_report_time TEXT');
   adminTableReady = true;
 }
 
@@ -818,10 +885,11 @@ async function writeAdminProfile(profile) {
         id, username, password, email, report_email, daily_report_email, monthly_report_email,
         report_recipients, sender_email, sender_app_password, sender_name,
         last_password_change, last_reminder_sent,
-        last_daily_report_sent, last_monthly_report_sent,
-        late_drop_off_after, late_pick_up_after
+        last_daily_report_sent, last_daily_drop_off_report_sent, last_daily_pick_up_report_sent,
+        last_monthly_report_sent, late_drop_off_after, late_pick_up_after,
+        daily_report_mode, combined_report_time, drop_off_report_time, pick_up_report_time
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
       ON CONFLICT (id) DO UPDATE SET
         username = EXCLUDED.username,
         password = EXCLUDED.password,
@@ -836,9 +904,15 @@ async function writeAdminProfile(profile) {
         last_password_change = EXCLUDED.last_password_change,
         last_reminder_sent = EXCLUDED.last_reminder_sent,
         last_daily_report_sent = EXCLUDED.last_daily_report_sent,
+        last_daily_drop_off_report_sent = EXCLUDED.last_daily_drop_off_report_sent,
+        last_daily_pick_up_report_sent = EXCLUDED.last_daily_pick_up_report_sent,
         last_monthly_report_sent = EXCLUDED.last_monthly_report_sent,
         late_drop_off_after = EXCLUDED.late_drop_off_after,
-        late_pick_up_after = EXCLUDED.late_pick_up_after
+        late_pick_up_after = EXCLUDED.late_pick_up_after,
+        daily_report_mode = EXCLUDED.daily_report_mode,
+        combined_report_time = EXCLUDED.combined_report_time,
+        drop_off_report_time = EXCLUDED.drop_off_report_time,
+        pick_up_report_time = EXCLUDED.pick_up_report_time
     `, [
       profile.username,
       profile.password,
@@ -853,9 +927,15 @@ async function writeAdminProfile(profile) {
       profile.lastPasswordChange || new Date().toISOString(),
       profile.lastReminderSent || null,
       profile.lastDailyReportSent || null,
+      profile.lastDailyDropOffReportSent || null,
+      profile.lastDailyPickUpReportSent || null,
       profile.lastMonthlyReportSent || null,
       normalizeScheduleSettings(profile.scheduleSettings).lateDropOffAfter,
       normalizeScheduleSettings(profile.scheduleSettings).latePickUpAfter,
+      normalizeDailyReportSettings(profile.dailyReportSettings).reportMode,
+      normalizeDailyReportSettings(profile.dailyReportSettings).combinedReportTime,
+      normalizeDailyReportSettings(profile.dailyReportSettings).dropOffReportTime,
+      normalizeDailyReportSettings(profile.dailyReportSettings).pickUpReportTime,
     ]);
     return;
   }
@@ -1112,7 +1192,7 @@ function createReportPdfBuffer(title, text) {
   return Buffer.from(pdf, 'utf8');
 }
 
-async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new Date())) {
+async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new Date()), reportKind = 'combined') {
   const transporter = getMailTransport(profile);
   const recipients = getReportRecipientsWithSender(profile);
   if (!transporter) {
@@ -1126,14 +1206,33 @@ async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new
     throw error;
   }
 
-  const records = (await readRecords()).filter((record) => (
+  const allRecords = (await readRecords()).filter((record) => (
     (record.eventDate || record.arrivalDate) === reportDate
   ));
+  const records = allRecords.filter((record) => {
+    if (reportKind === 'drop_off') {
+      return Boolean(record.dropOffTimestamp || record.timestamp);
+    }
+    if (reportKind === 'pick_up') {
+      return Boolean(record.pickUpTimestamp);
+    }
+    return true;
+  });
+  const reportLabel = reportKind === 'drop_off'
+    ? 'Daily drop-off report'
+    : reportKind === 'pick_up'
+      ? 'Daily pick-up report'
+      : 'Daily attendance report';
+  const emptyMessage = reportKind === 'drop_off'
+    ? 'No drop-off records were found for this date.'
+    : reportKind === 'pick_up'
+      ? 'No pick-up records were found for this date.'
+      : 'No attendance records were found for this date.';
   const reportBody = records.length
     ? records.map(formatDailyReportRecord).join('\n\n---\n\n')
-    : 'No attendance records were found for this date.';
+    : emptyMessage;
   const text = [
-    `Daily attendance report for ${reportDate}`,
+    `${reportLabel} for ${reportDate}`,
     '',
     `Total records: ${records.length}`,
     '',
@@ -1143,11 +1242,11 @@ async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new
   await transporter.sendMail({
     from: getMailFrom(profile),
     to: recipients,
-    subject: `Daily attendance report - ${reportDate}`,
+    subject: `${reportLabel} - ${reportDate}`,
     text,
     attachments: [{
-      filename: `daily-attendance-report-${reportDate}.pdf`,
-      content: createReportPdfBuffer(`Daily attendance report - ${reportDate}`, text),
+      filename: `${reportLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${reportDate}.pdf`,
+      content: createReportPdfBuffer(`${reportLabel} - ${reportDate}`, text),
       contentType: 'application/pdf',
     }],
   });
@@ -1226,24 +1325,55 @@ async function checkAndSendMonthlyReport() {
 
 async function checkAndSendDailyReport() {
   const now = new Date();
-  const hourParts = new Intl.DateTimeFormat('en-US', {
-    timeZone: ARRIVAL_TIME_ZONE,
-    hour: '2-digit',
-    hour12: false,
-  }).formatToParts(now);
-  const hour = Number(Object.fromEntries(hourParts.map((part) => [part.type, part.value])).hour);
-  if (hour < DAILY_REPORT_SEND_AFTER_HOUR) {
+  const reportDate = formatArrivalDate(now);
+  const profile = await readAdminProfile();
+  const dailyReportSettings = normalizeDailyReportSettings(profile.dailyReportSettings);
+
+  if (dailyReportSettings.reportMode === 'separate') {
+    try {
+      let profileChanged = false;
+      if (
+        profile.lastDailyDropOffReportSent !== reportDate
+        && shouldSendScheduledReport(now, dailyReportSettings.dropOffReportTime)
+      ) {
+        const sent = await sendDailyRecordReport(profile, reportDate, 'drop_off');
+        if (sent) {
+          profile.lastDailyDropOffReportSent = reportDate;
+          profileChanged = true;
+          console.log(`Daily drop-off report for ${reportDate} sent to ${getReportRecipientsWithSender(profile).join(', ')}`);
+        }
+      }
+
+      if (
+        profile.lastDailyPickUpReportSent !== reportDate
+        && shouldSendScheduledReport(now, dailyReportSettings.pickUpReportTime)
+      ) {
+        const sent = await sendDailyRecordReport(profile, reportDate, 'pick_up');
+        if (sent) {
+          profile.lastDailyPickUpReportSent = reportDate;
+          profileChanged = true;
+          console.log(`Daily pick-up report for ${reportDate} sent to ${getReportRecipientsWithSender(profile).join(', ')}`);
+        }
+      }
+
+      if (profileChanged) {
+        await writeAdminProfile(profile);
+      }
+    } catch (error) {
+      console.error('Failed to send separate daily report:', error.message || error);
+    }
     return;
   }
 
-  const reportDate = formatArrivalDate(now);
-  const profile = await readAdminProfile();
-  if (profile.lastDailyReportSent === reportDate) {
+  if (
+    profile.lastDailyReportSent === reportDate
+    || !shouldSendScheduledReport(now, dailyReportSettings.combinedReportTime)
+  ) {
     return;
   }
 
   try {
-    const sent = await sendDailyRecordReport(profile, reportDate);
+    const sent = await sendDailyRecordReport(profile, reportDate, 'combined');
     if (sent) {
       profile.lastDailyReportSent = reportDate;
       await writeAdminProfile(profile);
@@ -1529,6 +1659,7 @@ app.get('/api/admin/sender-settings', basicAuth, async (req, res) => {
   res.json({
     senderEmail: senderSettings.senderEmail,
     senderName: senderSettings.senderName,
+    dailyReportSettings: normalizeDailyReportSettings(profile.dailyReportSettings),
     hasSenderAppPassword: Boolean(senderSettings.senderAppPassword && !senderSettings.senderAppPassword.startsWith('your-')),
   });
 });
@@ -1542,21 +1673,34 @@ app.post('/api/admin/sender-settings', basicAuth, async (req, res) => {
     return res.status(400).json({ error: 'Sender email must be a valid email address.' });
   }
 
-  if (!senderAppPassword) {
+  const profile = await readAdminProfile();
+  const existingSenderSettings = normalizeSenderSettings(profile);
+  if (!senderAppPassword && !existingSenderSettings.senderAppPassword) {
     return res.status(400).json({ error: 'Sender app password is required.' });
   }
 
-  const profile = await readAdminProfile();
   await writeAdminProfile({
     ...profile,
     senderSettings: {
       senderEmail,
-      senderAppPassword,
+      senderAppPassword: senderAppPassword || existingSenderSettings.senderAppPassword,
       senderName,
     },
   });
 
   res.json({ senderEmail, senderName, hasSenderAppPassword: true });
+});
+
+app.post('/api/admin/daily-report-settings', basicAuth, async (req, res) => {
+  const dailyReportSettings = normalizeDailyReportSettings(req.body.dailyReportSettings || {});
+  const profile = await readAdminProfile();
+
+  await writeAdminProfile({
+    ...profile,
+    dailyReportSettings,
+  });
+
+  res.json({ dailyReportSettings });
 });
 
 app.post('/api/admin/daily-report/email', basicAuth, async (req, res) => {
@@ -1656,6 +1800,6 @@ app.listen(PORT, async () => {
   await checkAndSendDailyReport();
   await checkAndSendMonthlyReport();
   setInterval(checkAndSendPasswordReminder, 24 * 60 * 60 * 1000);
-  setInterval(checkAndSendDailyReport, 60 * 60 * 1000);
+  setInterval(checkAndSendDailyReport, 5 * 60 * 1000);
   setInterval(checkAndSendMonthlyReport, 24 * 60 * 60 * 1000);
 });

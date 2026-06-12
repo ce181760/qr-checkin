@@ -19,6 +19,9 @@ A lightweight student attendance app for event drop-off and pick-up. Parents use
 - Includes late reasons in Print / Save PDF reports.
 - Emails late reasons to the admin when SMTP is configured.
 - Shows the school logo on the check-in, success, admin login, dashboard, and account pages.
+- Shows a shared Princeton House background image behind the white content panel on guest and admin pages.
+- Shows an admin-only Email Report Setup announcement with a setup video link.
+- Lets admins choose combined or separate automatic daily attendance reports.
 
 ## Parent Flow
 
@@ -77,6 +80,8 @@ The dashboard shows:
 - Pick-up details
 - Delete action
 
+The dashboard also shows an admin-only announcement for Email Report Setup. This announcement is intentionally not shown on the public guest check-in page.
+
 The dashboard table intentionally does not show full late reasons, so the table stays easy to scan.
 
 ## Late Cutoff Times
@@ -123,7 +128,21 @@ If SMTP is configured, the app also emails the admin when a late reason is submi
 
 From the Admin Account page, staff can open **Sender Settings** to configure the one email account that sends reports. Staff can also open **Report Receivers** to add up to 12 receiver emails. The same receiver list gets daily and monthly reports.
 
-Reports are sent automatically. Daily reports send once per day after the configured end-of-day hour, and monthly reports send the previous month's report on the first day of each month.
+Sender Settings and Automatic Daily Reports have separate save buttons:
+
+- **Save Sender** saves the sender name, sender email, and sender app password.
+- **Save Automatic Daily Reports** saves only the daily report type and send times.
+
+A green success message appears directly below the save button that was used.
+
+Admins can choose one of two automatic daily report modes:
+
+- **One report with drop-off and pick-up**: sends one combined daily attendance report at one configured time.
+- **Separate drop-off and pick-up reports**: sends a drop-off report at one configured time and a pick-up report at another configured time.
+
+Daily report times use the app's USA Eastern time zone. The scheduler checks for daily reports every 5 minutes, so reports send shortly after the configured time when the server is running.
+
+Monthly reports send the previous month's report on the first day of each month.
 
 Automatic report emails include a plain text message and a PDF attachment. Reports include late labels and any late explanations saved on the attendance records.
 
@@ -193,8 +212,11 @@ http://localhost:3000
 - `public/admin.html`: Admin dashboard markup.
 - `public/admin.js`: Admin dashboard behavior, settings, export, print report.
 - `public/admin-account.html`: Admin account page.
+- `public/admin-sender-settings.html`: Sender email and automatic daily report settings page.
+- `public/admin-sender-settings.js`: Sender settings and daily report settings behavior.
 - `public/styles.css`: Shared styling.
 - `public/school-logo.jpeg`: School logo used across the app.
+- `public/princeton-house-background.jpg`: Shared background image shown behind the white content panel.
 - `data/attendance.csv`: Local CSV attendance storage.
 - `data/admin.json`: Local admin profile and settings storage. Do not commit real production data.
 
@@ -225,6 +247,7 @@ That preserves:
 - Admin account changes
 - Report receivers
 - Sender email settings
+- Automatic daily report mode and report times
 - Automatic daily and monthly report history
 
 In Render, add a persistent disk and mount it at:
@@ -279,7 +302,9 @@ SMTP_TIMEOUT_MS=10000
 DAILY_REPORT_SEND_AFTER_HOUR=18
 ```
 
-Use a dedicated sender email account for SMTP, not a personal email account. The sender account can be configured from **Admin Account** > **Sender Settings**. Report receiver emails are configured from **Admin Account** > **Report Receivers**.
+Use a dedicated sender email account for SMTP, not a personal email account. The sender account and automatic daily report schedule can be configured from **Admin Account** > **Sender Settings**. Report receiver emails are configured from **Admin Account** > **Report Receivers**.
+
+`DAILY_REPORT_SEND_AFTER_HOUR` is used as the default combined daily report hour for new admin profiles. After setup, admins can adjust the daily report time from the Sender Settings page.
 
 If SMTP is not configured, attendance still works. The app logs that email was skipped.
 
@@ -297,6 +322,8 @@ CSV attendance records include:
 - Pick-up time
 - Pick-up timestamp
 - Pick-up late reason
+- Pick-up late payment confirmation
+- Pick-up late payment receipt filename
 
 Older CSV formats are still read and normalized by the server.
 
@@ -308,6 +335,7 @@ Use these checks after code changes:
 node --check server.js
 node --check public\script.js
 node --check public\admin.js
+node --check public\admin-sender-settings.js
 ```
 
 ## Security Notes
@@ -341,6 +369,10 @@ This update added:
 - Optional late reason admin emails
 - Logo branding across pages
 - Persistent storage compatibility for the new fields
+- Admin-only Email Report Setup announcement
+- Sender email setup with separate automatic daily report settings
+- Combined daily reports or separate drop-off and pick-up daily reports
+- Shared Princeton House background image behind the content panel
 
 ---
 

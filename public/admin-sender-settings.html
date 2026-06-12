@@ -47,6 +47,37 @@
         <div style="margin: 0.25rem 0 1rem; color: #666;">Enter the app password with no spaces.</div>
 
         <button type="submit">Save Sender</button>
+        <div id="senderSettingsMessage" class="save-message"></div>
+      </form>
+
+      <form id="dailyReportSettingsForm" class="settings-panel daily-report-settings" onsubmit="saveDailyReportSettings(); return false;">
+        <h2>Automatic Daily Reports</h2>
+        <div class="settings-field">
+          <label for="dailyReportMode">Daily report type</label>
+          <select id="dailyReportMode" onchange="updateDailyReportModeFields()">
+            <option value="combined">One report with drop-off and pick-up</option>
+            <option value="separate">Separate drop-off and pick-up reports</option>
+          </select>
+        </div>
+        <div id="combinedReportTimeField" class="settings-field">
+          <label for="combinedReportTime">Send combined report at</label>
+          <input id="combinedReportTime" type="time" required />
+        </div>
+        <div id="dropOffReportTimeField" class="settings-field">
+          <label for="dropOffReportTime">Send drop-off report at</label>
+          <input id="dropOffReportTime" type="time" required />
+        </div>
+        <div id="pickUpReportTimeField" class="settings-field">
+          <label for="pickUpReportTime">Send pick-up report at</label>
+          <input id="pickUpReportTime" type="time" required />
+        </div>
+        <p class="settings-note">
+          Times use the app's USA Eastern time zone.
+        </p>
+        <div class="settings-actions">
+          <button type="submit">Save Automatic Daily Reports</button>
+        </div>
+        <div id="dailyReportSettingsMessage" class="save-message"></div>
       </form>
 
       <section style="margin-top: 1.5rem;">
@@ -110,8 +141,6 @@
           <li>Use your email address and the app password here.</li>
         </ol>
       </section>
-
-      <div id="senderSettingsMessage" style="margin-top: 1rem; min-height: 1.2rem;"></div>
     </div>
   </main>
 </body>
