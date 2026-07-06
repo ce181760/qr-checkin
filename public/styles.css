@@ -92,7 +92,16 @@ h1 {
 }
 
 #successMessage {
-  white-space: pre-line;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.success-message-line {
+  display: block;
+}
+
+.late-status-text {
+  color: #dc2626;
 }
 
 form,

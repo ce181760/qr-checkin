@@ -44,12 +44,33 @@
 
     if (studentName || parentName || actionTime) {
       const actionLabel = formatAction(action);
-      const message = [`${actionLabel} successful!`];
-      if (studentName) message.push(`Student: ${studentName}`);
-      if (parentName) message.push(`Parent: ${parentName}`);
-      if (actionTime) message.push(`${actionLabel} time: ${formatArrivalTime(actionTime)}`);
-      if (timingStatus) message.push(`${actionLabel} status: ${timingStatus}`);
-      document.getElementById('successMessage').innerText = message.join('\n');
+      const successMessage = document.getElementById('successMessage');
+      const lines = [
+        `${actionLabel} successful!`,
+        studentName ? `Student: ${studentName}` : '',
+        parentName ? `Parent: ${parentName}` : '',
+        actionTime ? `${actionLabel} time: ${formatArrivalTime(actionTime)}` : '',
+      ].filter(Boolean);
+
+      successMessage.textContent = '';
+      lines.forEach((line) => {
+        const lineElement = document.createElement('span');
+        lineElement.className = 'success-message-line';
+        lineElement.textContent = line;
+        successMessage.appendChild(lineElement);
+      });
+
+      if (timingStatus) {
+        const statusLine = document.createElement('span');
+        statusLine.className = 'success-message-line';
+        statusLine.append(`${actionLabel} status: `);
+
+        const statusValue = document.createElement('strong');
+        statusValue.className = timingStatus === 'Late' ? 'late-status-text' : '';
+        statusValue.textContent = timingStatus;
+        statusLine.appendChild(statusValue);
+        successMessage.appendChild(statusLine);
+      }
     }
   </script>
 </body>
