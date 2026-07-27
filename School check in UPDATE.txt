@@ -1,0 +1,44 @@
+Attendance for parents to sign up: Copy and paste it. 
+
+https://qr-checkin-e68h.onrender.com
+
+
+Admin Website dashboard (staff only): Copy and paste it. 
+
+https://qr-checkin-e68h.onrender.com/admin
+
+Hi everyone,
+
+We updated the student attendance system with a new drop-off and pick-up flow.
+
+What’s new:
+
+Parents now choose whether they are dropping off or picking up a student.
+
+Each student has one attendance record per event day that tracks both:
+- Drop-off time and parent name
+- Pick-up time and parent name
+
+The admin dashboard now shows:
+- Student status
+- Event date
+- Drop-off information
+- Pick-up information
+- Late labels when applicable
+
+New Update:
+
+Admins can now set late cutoff times for:
+- Late drop-off
+- Late pick-up
+
+If a parent drops off or picks up late, the system will ask them to enter a reason before completing the attendance action.
+
+Late reasons will not crowd the main dashboard table, but they will appear when using Print / Save PDF.
+
+The system also now shows whether a drop-off or pick-up was on time or late on the confirmation page.
+
+The school logo has also been added across the check-in and admin pages.
+
+Important note:
+Attendance records and admin account changes are saved using the persistent storage setup, so updating the app should not erase existing records.

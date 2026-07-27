@@ -1,0 +1,23 @@
+node_modules/
+.env
+.env.*
+.DS_Store
+.vscode/
+dist/
+build/
+coverage/
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Secrets, keys
+*.pem
+*.key
+
+# Local data and exports (contains PII, secrets, attendance records)
+data/
+
+# Optional IDE files
+.idea/

@@ -1,0 +1,18 @@
+{
+  "name": "event-checkin",
+  "version": "1.0.0",
+  "description": "Lightweight Node.js + Express app for schools: QR-ready name-only check-in that logs timestamps to CSV. Staff use a private admin dashboard to search, delete, and export attendance. Easy local deployment and optional email reminders.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ce181760/qr-checkin.git"
+  },
+  "dependencies": {
+    "express": "^4.18.4",
+    "nodemailer": "^8.0.10"
+  }
+}

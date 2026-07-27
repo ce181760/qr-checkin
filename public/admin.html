@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Staff Dashboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/admin-styles.css" />
+  <script src="/admin.js" defer></script>
+</head>
+<body>
+  <main>
+    <!-- LOGIN SCREEN -->
+    <div id="loginBox">
+      <h1>Admin Login</h1>
+      <form id="loginForm" onsubmit="login(); return false;">
+        <label for="username">Username</label>
+        <input id="username" type="text" required />
+        <label for="password">Password</label>
+        <input id="password" type="password" required />
+        <button type="submit">Login</button>
+        <div style="margin-top:0.5rem;text-align:center;"><a href="/admin/forgot">Forgot password?</a></div>
+      </form>
+      <div id="error" style="color: red; margin-top: 0.5rem; text-align: center;"></div>
+    </div>
+
+    <!-- DASHBOARD (hidden until login) -->
+    <div id="dashboard" style="display: none;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <h1>Attendance Dashboard</h1>
+        <div>
+          <span id="userName" style="margin-right: 1rem; color: #666;"></span>
+          <button type="button" id="logoutBtn" onclick="logout()">Logout</button>
+        </div>
+      </div>
+
+      <div id="adminToolbar" class="toolbar">
+        <input id="search" type="search" placeholder="Search names" oninput="filterTable()" />
+        <button id="exportBtn" type="button" onclick="exportCSV()">Export CSV</button>
+        <button id="accountBtn" type="button" onclick="window.location.href='/admin/account'">Admin Account</button>
+        <button id="print" type="button" onclick="printPage()">Print / Save PDF</button>
+      </div>
+
+      <div id="recordsSection">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Check-in Time</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="data"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

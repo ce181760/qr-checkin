@@ -1,0 +1,10 @@
+Clone: https://github.com/ce181760/qr-checkin.git
+
+
+Website: https://github.com/ce181760/qr-checkin
+
+
+I used Visual Studio for coding. 
+
+git download for CMD: https://git-scm.com/install/windows
+
