@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Reset Password</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="/admin-reset.js" defer></script>
+</head>
+<body>
+  <main>
+    <div style="max-width:420px;margin:2rem auto;padding:1rem;border:1px solid #ddd;border-radius:6px;">
+      <h1>Set New Password</h1>
+      <form id="resetForm" onsubmit="resetPassword(); return false;">
+        <input id="token" type="hidden" />
+        <label for="password">New password</label>
+        <input id="password" type="password" required />
+        <label for="confirm">Confirm password</label>
+        <input id="confirm" type="password" required />
+        <button type="submit">Set password</button>
+      </form>
+      <div id="message" style="margin-top:1rem;color:green;"></div>
+      <div style="margin-top:1rem;"><a href="/admin">Back to login</a></div>
+    </div>
+  </main>
+</body>
+</html>
