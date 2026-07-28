@@ -25,11 +25,11 @@ function initAccountPage() {
 }
 
 function login() {
-  const username = document.getElementById('username').value.trim();
+  const identifier = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value;
 
-  if (!username || !password) {
-    showError('Username and password are required.');
+  if (!identifier || !password) {
+    showError('Username, email, or phone and password are required.');
     return;
   }
 
@@ -38,7 +38,7 @@ function login() {
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ identifier, password }),
   })
     .then(async (response) => {
       if (!response.ok) {
@@ -48,7 +48,7 @@ function login() {
       return response.json();
     })
     .then((profile) => {
-      authHeader = `Basic ${btoa(`${username}:${password}`)}`;
+      authHeader = `Basic ${btoa(`${identifier}:${password}`)}`;
       localStorage.setItem('eventCheckinAdminAuthHeader', authHeader);
       forcePasswordChange = profile.passwordChangeRequired === true;
       showAccountPage(profile);
@@ -89,6 +89,7 @@ function showAccountPage(profile) {
   currentProfile = profile;
   document.getElementById('profileUsername').value = profile.username;
   document.getElementById('profileEmail').value = profile.email;
+  document.getElementById('profilePhone').value = profile.phone || '';
   document.getElementById('profilePassword').value = '';
   document.getElementById('profileMessage').innerText = '';
 
@@ -104,6 +105,7 @@ function showAccountPage(profile) {
 function saveProfile() {
   const username = document.getElementById('profileUsername').value.trim();
   const email = document.getElementById('profileEmail').value.trim();
+  const phone = document.getElementById('profilePhone').value.trim();
   const password = document.getElementById('profilePassword').value;
   const passwordConfirm = document.getElementById('profilePasswordConfirm').value;
 
@@ -125,7 +127,7 @@ function saveProfile() {
       'Content-Type': 'application/json',
       Authorization: authHeader,
     },
-    body: JSON.stringify({ username, password, email }),
+    body: JSON.stringify({ username, password, email, phone }),
   })
     .then(async (response) => {
       if (!response.ok) {

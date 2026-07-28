@@ -24,18 +24,18 @@ function initReportSettingsPage() {
 }
 
 function login() {
-  const username = document.getElementById('username').value.trim();
+  const identifier = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value;
 
-  if (!username || !password) {
-    showError('Username and password are required.');
+  if (!identifier || !password) {
+    showError('Username, email, or phone and password are required.');
     return;
   }
 
   fetch('/api/admin/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ identifier, password }),
   })
     .then(async (response) => {
       if (!response.ok) {
@@ -45,7 +45,7 @@ function login() {
       return response.json();
     })
     .then((profile) => {
-      authHeader = `Basic ${btoa(`${username}:${password}`)}`;
+      authHeader = `Basic ${btoa(`${identifier}:${password}`)}`;
       localStorage.setItem('eventCheckinAdminAuthHeader', authHeader);
       if (profile.passwordChangeRequired) {
         window.location.href = '/admin/account?force=true';

@@ -45,11 +45,11 @@ function hideDashboard() {
 }
 
 function login() {
-  const username = document.getElementById("username").value.trim();
+  const identifier = document.getElementById("username").value.trim();
   const password = document.getElementById("password").value;
 
-  if (!username || !password) {
-    document.getElementById("error").innerText = "Username and password are required.";
+  if (!identifier || !password) {
+    document.getElementById("error").innerText = "Username, email, or phone and password are required.";
     return;
   }
 
@@ -58,7 +58,7 @@ function login() {
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ identifier, password }),
   })
     .then(async (response) => {
       if (!response.ok) {
@@ -69,7 +69,7 @@ function login() {
     })
     .then((profile) => {
       authenticated = true;
-      authHeader = `Basic ${btoa(`${username}:${password}`)}`;
+      authHeader = `Basic ${btoa(`${identifier}:${password}`)}`;
       localStorage.setItem('eventCheckinAdminAuthHeader', authHeader);
       currentProfile = profile;
       if (profile.passwordChangeRequired) {

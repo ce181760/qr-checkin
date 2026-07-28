@@ -1,5 +1,5 @@
 async function sendReset() {
-  const email = document.getElementById('email').value.trim();
+  const identifier = document.getElementById('identifier').value.trim();
   const msg = document.getElementById('message');
   msg.style.color = 'green';
   msg.innerText = 'Sending...';
@@ -8,7 +8,7 @@ async function sendReset() {
     const res = await fetch('/api/admin/forgot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ identifier }),
     });
 
     if (!res.ok) {
