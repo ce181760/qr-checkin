@@ -302,6 +302,8 @@ SMTP_TIMEOUT_MS=10000
 DAILY_REPORT_SEND_AFTER_HOUR=18
 ```
 
+If you use Outlook / Microsoft 365, generate an app password from your Microsoft account security settings and use that in `SMTP_PASS` instead of your normal email password.
+
 Use a dedicated sender email account for SMTP, not a personal email account. The sender account and automatic daily report schedule can be configured from **Admin Account** > **Sender Settings**. Report receiver emails are configured from **Admin Account** > **Report Receivers**.
 
 `DAILY_REPORT_SEND_AFTER_HOUR` is used as the default combined daily report hour for new admin profiles. After setup, admins can adjust the daily report time from the Sender Settings page.
