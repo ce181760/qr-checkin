@@ -14,8 +14,8 @@
       <img class="site-logo" src="/school-logo.jpeg" alt="School logo" />
       <h1>Admin Login</h1>
       <form id="loginForm" onsubmit="login(); return false;">
-        <label for="username">Username</label>
-        <input id="username" type="text" required />
+        <label for="username">Username, email, or phone</label>
+        <input id="username" type="text" placeholder="Username, email, or phone" required />
 
         <label for="password">Password</label>
         <input id="password" type="password" required />
@@ -47,6 +47,9 @@
 
         <label for="profileEmail">Email</label>
         <input id="profileEmail" type="email" required />
+
+        <label for="profilePhone">Phone (optional)</label>
+        <input id="profilePhone" type="tel" placeholder="Optional phone for login" />
 
         <label for="profilePassword">Password</label>
         <input id="profilePassword" type="password" required />

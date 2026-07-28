@@ -671,8 +671,9 @@ async function basicAuth(req, res, next) {
   const credentials = Buffer.from(authHeader.slice(6), 'base64').toString('utf8');
   const [user, pass] = credentials.split(':');
   const profile = await readAdminProfile();
+  const validIdentifiers = [profile.username, profile.email, profile.phone].filter(Boolean);
 
-  if (user === profile.username && pass === profile.password) {
+  if (validIdentifiers.includes(user) && pass === profile.password) {
     return next();
   }
 
@@ -754,6 +755,7 @@ function getDefaultAdminProfile() {
     username: ADMIN_USER,
     password: ADMIN_PASS,
     email: ADMIN_EMAIL,
+    phone: '',
     reportEmail: REPORT_EMAIL || ADMIN_EMAIL,
     dailyReportEmail: DAILY_REPORT_EMAIL || REPORT_EMAIL || ADMIN_EMAIL,
     monthlyReportEmail: MONTHLY_REPORT_EMAIL || REPORT_EMAIL || ADMIN_EMAIL,
@@ -784,6 +786,7 @@ function normalizeAdminProfile(profile) {
     username: profile.username || ADMIN_USER,
     password: profile.password || ADMIN_PASS,
     email,
+    phone: profile.phone || profile.phone_number || '',
     reportEmail: profile.reportEmail || profile.report_email || REPORT_EMAIL || profile.email || email,
     dailyReportEmail: profile.dailyReportEmail || profile.daily_report_email || profile.reportEmail || profile.report_email || DAILY_REPORT_EMAIL || REPORT_EMAIL || profile.email || email,
     monthlyReportEmail: profile.monthlyReportEmail || profile.monthly_report_email || profile.reportEmail || profile.report_email || MONTHLY_REPORT_EMAIL || REPORT_EMAIL || profile.email || email,
@@ -853,6 +856,7 @@ async function ensureAdminTable() {
       pick_up_report_time TEXT
     )
   `);
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS phone TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS report_email TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS daily_report_email TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS monthly_report_email TEXT');
@@ -905,18 +909,19 @@ async function writeAdminProfile(profile) {
     await ensureAdminTable();
     await dbPool.query(`
       INSERT INTO admin_profile (
-        id, username, password, email, report_email, daily_report_email, monthly_report_email,
+        id, username, password, email, phone, report_email, daily_report_email, monthly_report_email,
         report_recipients, sender_email, sender_app_password, sender_name,
         last_password_change, last_reminder_sent,
         last_daily_report_sent, last_daily_drop_off_report_sent, last_daily_pick_up_report_sent,
         last_monthly_report_sent, late_drop_off_after, late_pick_up_after,
         daily_report_mode, combined_report_time, drop_off_report_time, pick_up_report_time
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
       ON CONFLICT (id) DO UPDATE SET
         username = EXCLUDED.username,
         password = EXCLUDED.password,
         email = EXCLUDED.email,
+        phone = EXCLUDED.phone,
         report_email = EXCLUDED.report_email,
         daily_report_email = EXCLUDED.daily_report_email,
         monthly_report_email = EXCLUDED.monthly_report_email,
@@ -940,6 +945,7 @@ async function writeAdminProfile(profile) {
       profile.username,
       profile.password,
       profile.email,
+      profile.phone || '',
       profile.reportEmail || profile.email,
       profile.dailyReportEmail || profile.reportEmail || profile.email,
       profile.monthlyReportEmail || profile.reportEmail || profile.email,
@@ -1576,26 +1582,28 @@ function writeRecords(records) {
 }
 
 app.post('/api/admin/login', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required' });
+  const identifier = String(req.body.identifier || req.body.username || '').trim();
+  const password = String(req.body.password || '');
+  if (!identifier || !password) {
+    return res.status(400).json({ error: 'Username/email/phone and password are required' });
   }
 
   const profile = await readAdminProfile();
-  if (username === profile.username && password === profile.password) {
-    return res.json({ username: profile.username, email: profile.email, passwordChangeRequired: isPasswordChangeRequired(profile) });
+  const validIdentifiers = [profile.username, profile.email, profile.phone].filter(Boolean);
+  if (validIdentifiers.includes(identifier) && password === profile.password) {
+    return res.json({ username: profile.username, email: profile.email, phone: profile.phone, passwordChangeRequired: isPasswordChangeRequired(profile) });
   }
 
-  return res.status(403).json({ error: 'Invalid username or password' });
+  return res.status(403).json({ error: 'Invalid username/email/phone or password' });
 });
 
 app.get('/api/admin/profile', basicAuth, async (req, res) => {
   const profile = await readAdminProfile();
-  res.json({ username: profile.username, email: profile.email, passwordChangeRequired: isPasswordChangeRequired(profile) });
+  res.json({ username: profile.username, email: profile.email, phone: profile.phone, passwordChangeRequired: isPasswordChangeRequired(profile) });
 });
 
 app.post('/api/admin/profile', basicAuth, async (req, res) => {
-  const { username, password, email } = req.body;
+  const { username, password, email, phone } = req.body;
   if (!username || !password || !email) {
     return res.status(400).json({ error: 'Username, password, and email are required' });
   }
@@ -1609,6 +1617,7 @@ app.post('/api/admin/profile', basicAuth, async (req, res) => {
     username,
     password,
     email,
+    phone: String(phone || currentProfile.phone || '').trim(),
     reportEmail: currentProfile.reportEmail || email,
     dailyReportEmail: currentProfile.dailyReportEmail || currentProfile.reportEmail || email,
     monthlyReportEmail: currentProfile.monthlyReportEmail || currentProfile.reportEmail || email,
@@ -1620,7 +1629,7 @@ app.post('/api/admin/profile', basicAuth, async (req, res) => {
     scheduleSettings: currentProfile.scheduleSettings,
   };
   await writeAdminProfile(profile);
-  return res.json({ username: profile.username, email: profile.email, passwordChangeRequired: false });
+  return res.json({ username: profile.username, email: profile.email, phone: profile.phone, passwordChangeRequired: false });
 });
 
 app.get('/api/admin/schedule-settings', basicAuth, async (req, res) => {
@@ -1647,6 +1656,10 @@ app.get('/admin/forgot', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin-forgot.html'));
 });
 
+app.get('/admin/forgot-username', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-forgot-username.html'));
+});
+
 app.get('/admin/reset', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin-reset.html'));
 });
@@ -1655,21 +1668,56 @@ app.get('/admin/reset.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin-reset.html'));
 });
 
+app.post('/api/admin/forgot-username', async (req, res) => {
+  const identifier = String(req.body.identifier || '').trim();
+  if (!identifier) {
+    return res.status(400).json({ error: 'Email or phone is required' });
+  }
+
+  try {
+    const profile = await readAdminProfile();
+    const normalizedProfile = { ...profile };
+    if (normalizedProfile.email === 'admin@example.com' && identifier.includes('@')) {
+      normalizedProfile.email = identifier;
+    }
+
+    const emailMatches = identifier && normalizedProfile.email && identifier === normalizedProfile.email;
+    const phoneMatches = identifier && normalizedProfile.phone && identifier === normalizedProfile.phone;
+    if (!emailMatches && !phoneMatches) {
+      return res.status(400).json({ error: 'No matching admin account' });
+    }
+
+    const transporter = getMailTransport(normalizedProfile);
+    if (transporter && normalizedProfile.email) {
+      const subject = 'Your admin username';
+      const text = `Hello ${profile.username},\n\nYour admin username is: ${profile.username}\n\nIf you did not request this, you can ignore this message.\n`;
+      const html = `<!DOCTYPE html><html><body><p>Hello ${profile.username},</p><p>Your admin username is: <strong>${profile.username}</strong></p><p>If you did not request this, you can ignore this message.</p></body></html>`;
+
+      await transporter.sendMail({ from: getMailFrom(normalizedProfile), to: normalizedProfile.email, subject, text, html });
+      return res.json({ success: true, emailSent: true });
+    }
+
+    return res.json({ success: true, emailSent: false, username: profile.username, note: 'SMTP not configured, showing username directly.' });
+  } catch (error) {
+    console.error('Forgot username error:', error.message || error);
+    return res.status(500).json({ error: 'Unable to process request' });
+  }
+});
+
 app.post('/api/admin/forgot', async (req, res) => {
-  const email = String(req.body.email || '').trim();
-  const username = String(req.body.username || '').trim();
-  if (!email && !username) {
+  const identifier = String(req.body.identifier || req.body.email || req.body.username || '').trim();
+  if (!identifier) {
     return res.status(400).json({ error: 'Email or username is required' });
   }
 
   try {
     const profile = await readAdminProfile();
-    if (profile.email === 'admin@example.com' && email) {
-      profile.email = email;
+    if (profile.email === 'admin@example.com' && identifier && identifier.includes('@')) {
+      profile.email = identifier;
     }
 
-    const emailMatches = email && profile.email && email === profile.email;
-    const usernameMatches = username && username === profile.username;
+    const emailMatches = identifier && profile.email && identifier === profile.email;
+    const usernameMatches = identifier && identifier === profile.username;
     if (!emailMatches && !usernameMatches) {
       return res.status(400).json({ error: 'No matching admin account' });
     }
