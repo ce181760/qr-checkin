@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const nodemailer = require('nodemailer');
+const crypto = require('crypto');
 const { Pool } = require('pg');
 
 const app = express();
@@ -25,6 +26,7 @@ const SMTP_TIMEOUT_MS = parseInt(process.env.SMTP_TIMEOUT_MS, 10) || 10000;
 const REPORT_EMAIL = process.env.REPORT_EMAIL || '';
 const DAILY_REPORT_EMAIL = process.env.DAILY_REPORT_EMAIL || REPORT_EMAIL;
 const MONTHLY_REPORT_EMAIL = process.env.MONTHLY_REPORT_EMAIL || REPORT_EMAIL;
+const BASE_URL = (process.env.BASE_URL || 'https://qr-checkin-e68h.onrender.com').replace(/\/$/, '');
 const ARRIVAL_TIME_ZONE = 'America/New_York';
 const DEFAULT_LATE_DROP_OFF_AFTER = '08:36';
 const DEFAULT_LATE_PICK_UP_AFTER = '13:35';
@@ -53,9 +55,21 @@ const dbPool = DATABASE_URL ? new Pool({
 let adminTableReady = false;
 let attendanceTableReady = false;
 
+app.set('trust proxy', true);
+
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json({ limit: '8mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+function getAppBaseUrl(req) {
+  if (BASE_URL) {
+    return BASE_URL;
+  }
+
+  const protocol = req.protocol || 'http';
+  const host = req.get('host') || `localhost:${PORT}`;
+  return `${protocol}://${host}`;
+}
 
 function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -756,14 +770,23 @@ function getDefaultAdminProfile() {
   };
 }
 
+function normalizeAdminEmail(email) {
+  const defaultEmail = ADMIN_EMAIL || 'admin@example.com';
+  if (email && email !== 'admin@example.com') {
+    return email;
+  }
+  return defaultEmail;
+}
+
 function normalizeAdminProfile(profile) {
+  const email = normalizeAdminEmail(profile.email);
   return {
     username: profile.username || ADMIN_USER,
     password: profile.password || ADMIN_PASS,
-    email: profile.email || ADMIN_EMAIL,
-    reportEmail: profile.reportEmail || profile.report_email || REPORT_EMAIL || profile.email || ADMIN_EMAIL,
-    dailyReportEmail: profile.dailyReportEmail || profile.daily_report_email || profile.reportEmail || profile.report_email || DAILY_REPORT_EMAIL || REPORT_EMAIL || profile.email || ADMIN_EMAIL,
-    monthlyReportEmail: profile.monthlyReportEmail || profile.monthly_report_email || profile.reportEmail || profile.report_email || MONTHLY_REPORT_EMAIL || REPORT_EMAIL || profile.email || ADMIN_EMAIL,
+    email,
+    reportEmail: profile.reportEmail || profile.report_email || REPORT_EMAIL || profile.email || email,
+    dailyReportEmail: profile.dailyReportEmail || profile.daily_report_email || profile.reportEmail || profile.report_email || DAILY_REPORT_EMAIL || REPORT_EMAIL || profile.email || email,
+    monthlyReportEmail: profile.monthlyReportEmail || profile.monthly_report_email || profile.reportEmail || profile.report_email || MONTHLY_REPORT_EMAIL || REPORT_EMAIL || profile.email || email,
     reportRecipients: normalizeReportRecipients(
       profile.reportRecipients || profile.report_recipients,
       profile.reportEmail || profile.report_email || REPORT_EMAIL || profile.email || ADMIN_EMAIL
@@ -1618,6 +1641,88 @@ app.post('/api/admin/schedule-settings', basicAuth, async (req, res) => {
   });
 
   res.json(scheduleSettings);
+});
+
+app.get('/admin/forgot', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-forgot.html'));
+});
+
+app.get('/admin/reset', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-reset.html'));
+});
+
+app.get('/admin/reset.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-reset.html'));
+});
+
+app.post('/api/admin/forgot', async (req, res) => {
+  const email = String(req.body.email || '').trim();
+  const username = String(req.body.username || '').trim();
+  if (!email && !username) {
+    return res.status(400).json({ error: 'Email or username is required' });
+  }
+
+  try {
+    const profile = await readAdminProfile();
+    if (profile.email === 'admin@example.com' && email) {
+      profile.email = email;
+    }
+
+    const emailMatches = email && profile.email && email === profile.email;
+    const usernameMatches = username && username === profile.username;
+    if (!emailMatches && !usernameMatches) {
+      return res.status(400).json({ error: 'No matching admin account' });
+    }
+
+    // generate reset token
+    const token = crypto.randomBytes(20).toString('hex');
+    profile.resetToken = token;
+    profile.resetTokenExpiry = Date.now() + (60 * 60 * 1000); // 1 hour
+    await writeAdminProfile(profile);
+
+    const transporter = getMailTransport(profile);
+    if (!transporter) {
+      console.log('SMTP not configured. Cannot send password reset.');
+      return res.status(500).json({ error: 'SMTP not configured' });
+    }
+
+    const resetUrl = `${getAppBaseUrl(req)}/admin/reset?token=${token}`;
+    const subject = 'Reset your admin password';
+    const text = `Hello ${profile.username},\n\nA request to reset the admin password was received.\n\nIf you requested this, open the link below and set a new password (link expires in 1 hour):\n\n${resetUrl}\n\nIf you did not request this, you can ignore this message.\n`;
+    const html = `<!DOCTYPE html><html><body><p>Hello ${profile.username},</p><p>A request to reset the admin password was received.</p><p><a href="${resetUrl}">Click here to reset your password</a></p><p>This link expires in 1 hour.</p><p>If you did not request this, you can ignore this message.</p></body></html>`;
+
+    await transporter.sendMail({ from: getMailFrom(profile), to: profile.email, subject, text, html });
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Forgot password error:', error.message || error);
+    return res.status(500).json({ error: 'Unable to process request' });
+  }
+});
+
+app.post('/api/admin/reset', async (req, res) => {
+  const token = String(req.body.token || '').trim();
+  const password = String(req.body.password || '');
+  if (!token || !password) {
+    return res.status(400).json({ error: 'Token and new password are required' });
+  }
+
+  try {
+    const profile = await readAdminProfile();
+    if (!profile.resetToken || profile.resetToken !== token || !profile.resetTokenExpiry || Date.now() > Number(profile.resetTokenExpiry)) {
+      return res.status(400).json({ error: 'Invalid or expired token' });
+    }
+
+    profile.password = password;
+    delete profile.resetToken;
+    delete profile.resetTokenExpiry;
+    profile.lastPasswordChange = new Date().toISOString();
+    await writeAdminProfile(profile);
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Reset password error:', error.message || error);
+    return res.status(500).json({ error: 'Unable to reset password' });
+  }
 });
 
 app.get('/api/admin/report-settings', basicAuth, async (req, res) => {
