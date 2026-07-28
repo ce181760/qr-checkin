@@ -179,29 +179,141 @@ Password: admin123
 
 ## Quick Start
 
-Open PowerShell in the project folder:
+### 1. Install Node.js and Git
 
-```powershell
-cd C:\Users\Cesar\Documents\event-checkin\qr-checkin
+- Download Node.js from https://nodejs.org and install the latest Long Term Support (LTS) version.
+- Confirm Node is installed:
+
+```bash
+node --version
+npm --version
 ```
 
-Install dependencies:
+- Install Git if it is not already installed:
 
-```powershell
+```bash
+git --version
+```
+
+### 2. Clone the repository
+
+```bash
+git clone https://github.com/ce181760/qr-checkin.git
+cd qr-checkin
+```
+
+### 3. Install dependencies
+
+```bash
 npm install
 ```
 
-Start the server:
+### 4. Start the server locally
 
-```powershell
+```bash
 npm start
 ```
 
-Open:
+### 5. Open the app
 
 ```text
 http://localhost:3000
 ```
+
+## Deployment Guide
+
+### Clone the repository
+
+```bash
+git clone https://github.com/ce181760/qr-checkin.git
+cd qr-checkin
+```
+
+### Local setup
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Create a `.env` file if needed, or configure environment variables in your shell.
+3. Start the app:
+
+```bash
+npm start
+```
+
+4. Open the app in your browser:
+
+```text
+http://localhost:3000
+```
+
+### Render setup
+
+Render is a good option for this app because it supports Node.js and persistent disk storage.
+
+1. Create a new Web Service in Render.
+2. Use the GitHub repository URL: `https://github.com/ce181760/qr-checkin`.
+3. Set the branch you want to deploy (for example `main` or your feature branch).
+4. Use these build and start commands:
+
+   - Build command: `npm install`
+   - Start command: `npm start`
+
+5. Add environment variables in Render:
+
+   - `NODE_ENV=production`
+   - `DATA_DIR=/var/data`
+   - `SMTP_HOST` (e.g. `smtp.gmail.com`)
+   - `SMTP_PORT` (e.g. `587`)
+   - `SMTP_USER` (sender email)
+   - `SMTP_PASS` (app password)
+   - `SMTP_FROM` (for example `Event Check-In <sender@example.com>`)
+   - `SMTP_SECURE=false`
+   - `SMTP_TIMEOUT_MS=10000`
+   - `REPORT_EMAIL` (optional)
+   - `DAILY_REPORT_SEND_AFTER_HOUR=18`
+
+6. Configure persistent disk storage:
+
+   - Add a Persistent Disk in Render.
+   - Mount it at `/var/data`.
+   - Set `DATA_DIR=/var/data` in your Render environment settings.
+
+With this setup, the app stores its files at:
+
+```text
+/var/data/attendance.csv
+/var/data/admin.json
+/var/data/users.csv
+```
+
+### Deploying to a different environment
+
+If your IT team wants to use another deployment platform instead of Render, the same app requirements apply:
+
+- Node.js 18+ installed
+- `npm install` to install dependencies
+- `npm start` to run the app
+- `DATA_DIR` must point to a persistent folder for saved data
+
+For example, on another host or container platform:
+
+- Set `DATA_DIR` to a mounted volume path
+- Ensure the `PORT` environment variable is available
+- Configure SMTP environment variables as above
+- Use the same `npm install` and `npm start` commands
+
+If using Postgres instead of local files, set:
+
+- `DATABASE_URL`
+- `DATABASE_SSL=true` (if required)
+
+### Why persistent storage matters
+
+Render and many cloud hosts reset their filesystem on redeploy or restart. This app stores the admin profile and attendance CSV files on disk, so a persistent volume is required to avoid data loss.
 
 ## Files Of Interest
 
