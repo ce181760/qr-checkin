@@ -3,20 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Check-In Successful</title>
+  <title>Attendance Updated</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <main>
-    <h1>Check-In Successful</h1>
-    <p id="successMessage">Thanks - your check-in was successful.</p>
-    <a href="/">Back to check-in</a>
+    <img class="site-logo" src="/school-logo.jpeg" alt="School logo" />
+    <h1>Attendance Updated</h1>
+    <p id="successMessage">Thanks - your attendance update was successful.</p>
+    <a href="/">Back to attendance</a>
   </main>
   <script>
     const params = new URLSearchParams(window.location.search);
     const studentName = params.get('studentName');
     const parentName = params.get('parentName');
-    const arrivalTime = params.get('arrivalTime');
+    const action = params.get('action');
+    const actionTime = params.get('actionTime');
+    const timingStatus = params.get('timingStatus');
 
     function formatArrivalTime(time) {
       const match = String(time || '').match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
@@ -35,12 +38,39 @@
       return `${displayHours}:${minutes} ${period}`;
     }
 
-    if (studentName || parentName || arrivalTime) {
-      const message = ['Check-in successful!'];
-      if (studentName) message.push(`Student: ${studentName}`);
-      if (parentName) message.push(`Parent: ${parentName}`);
-      if (arrivalTime) message.push(`Arrival time: ${formatArrivalTime(arrivalTime)}`);
-      document.getElementById('successMessage').innerText = message.join('\n');
+    function formatAction(actionValue) {
+      return actionValue === 'pick_up' ? 'Pick-up' : 'Drop-off';
+    }
+
+    if (studentName || parentName || actionTime) {
+      const actionLabel = formatAction(action);
+      const successMessage = document.getElementById('successMessage');
+      const lines = [
+        `${actionLabel} successful!`,
+        studentName ? `Student: ${studentName}` : '',
+        parentName ? `Parent: ${parentName}` : '',
+        actionTime ? `${actionLabel} time: ${formatArrivalTime(actionTime)}` : '',
+      ].filter(Boolean);
+
+      successMessage.textContent = '';
+      lines.forEach((line) => {
+        const lineElement = document.createElement('span');
+        lineElement.className = 'success-message-line';
+        lineElement.textContent = line;
+        successMessage.appendChild(lineElement);
+      });
+
+      if (timingStatus) {
+        const statusLine = document.createElement('span');
+        statusLine.className = 'success-message-line';
+        statusLine.append(`${actionLabel} status: `);
+
+        const statusValue = document.createElement('strong');
+        statusValue.className = timingStatus === 'Late' ? 'late-status-text' : '';
+        statusValue.textContent = timingStatus;
+        statusLine.appendChild(statusValue);
+        successMessage.appendChild(statusLine);
+      }
     }
   </script>
 </body>

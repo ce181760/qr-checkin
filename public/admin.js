@@ -35,6 +35,7 @@ function showDashboard() {
   document.getElementById("adminToolbar").style.display = "flex";
   document.getElementById("recordsSection").style.display = "block";
   loadProfile();
+  loadScheduleSettings();
   loadData();
 }
 
@@ -160,30 +161,36 @@ function loadData() {
       return response.json();
     })
     .then(records => {
-      records.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      records.sort((a, b) => new Date(getSortTimestamp(b)) - new Date(getSortTimestamp(a)));
       currentRecords = records;
 
       let html = "";
       records.forEach((record, index) => {
         html += `
           <tr>
-            <td>${escapeHtml(record.studentName)} / ${escapeHtml(record.parentName)}</td>
-            <td>${escapeHtml(record.arrivalDate || formatDate(record.timestamp))}</td>
-            <td>${escapeHtml(formatArrivalTime(record))}</td>
+            <td>${escapeHtml(record.studentName)}</td>
+            <td><span class="status ${escapeHtml(getStatusClass(record.status))}">${escapeHtml(record.status || getRecordStatus(record))}</span></td>
+            <td>${formatTimingFlags(record.timingFlags)}</td>
+            <td>${escapeHtml(record.eventDate || record.arrivalDate || formatDate(record.dropOffTimestamp || record.timestamp))}</td>
+            <td>${escapeHtml(formatPersonTime(record.dropOffParentName || record.parentName, record.dropOffTime || record.arrivalTime, record.dropOffTimestamp || record.timestamp))}</td>
+            <td>${escapeHtml(formatPersonTime(record.pickUpParentName, record.pickUpTime, record.pickUpTimestamp))}</td>
+            <td>${renderLatePickUpPayment(record, index)}</td>
             <td><button type="button" onclick="deleteRecord(${index})">Delete</button></td>
           </tr>
         `;
       });
 
       if (!html) {
-        html = "<tr><td colspan=\"4\">No records yet.</td></tr>";
+        html = "<tr><td colspan=\"8\">No records yet.</td></tr>";
       }
 
       document.getElementById("data").innerHTML = html;
+      renderLateReasonsReport(records);
     })
     .catch(error => {
       console.error('Attendance load error:', error);
-      document.getElementById("data").innerHTML = `<tr><td colspan=\"4\">Unable to load attendance: ${escapeHtml(error.message)}</td></tr>`;
+      document.getElementById("data").innerHTML = `<tr><td colspan=\"8\">Unable to load attendance: ${escapeHtml(error.message)}</td></tr>`;
+      document.getElementById("lateReasonsReport").innerHTML = "";
     });
 }
 
@@ -193,7 +200,7 @@ function deleteRecord(index) {
     return alert('Unable to delete record. Please log in again.');
   }
 
-  if (!confirm(`Delete attendance record for ${record.studentName} / ${record.parentName}?`)) {
+  if (!confirm(`Delete attendance record for ${record.studentName} on ${record.eventDate || record.arrivalDate}?`)) {
     return;
   }
 
@@ -238,14 +245,18 @@ function filterTable() {
 // EXPORT TO CSV
 function exportCSV() {
   const rows = document.querySelectorAll("#data tr");
-  let csv = "Name,Arrival Date,Arrival Time\n";
+  let csv = "Student,Status,Late Labels,Event Date,Drop-off,Pick-up,Payment\n";
 
   rows.forEach(row => {
-    if (row.style.display !== "none" && row.cells.length >= 3) {
-      const name = row.cells[0].innerText.replace(/"/g, '""');
-      const arrivalDate = row.cells[1].innerText.replace(/"/g, '""');
-      const arrivalTime = row.cells[2].innerText.replace(/"/g, '""');
-      csv += `"${name}","${arrivalDate}","${arrivalTime}"\n`;
+    if (row.style.display !== "none" && row.cells.length >= 7) {
+      const student = row.cells[0].innerText.replace(/"/g, '""');
+      const status = row.cells[1].innerText.replace(/"/g, '""');
+      const lateLabels = row.cells[2].innerText.replace(/"/g, '""');
+      const eventDate = row.cells[3].innerText.replace(/"/g, '""');
+      const dropOff = row.cells[4].innerText.replace(/"/g, '""');
+      const pickUp = row.cells[5].innerText.replace(/"/g, '""');
+      const payment = row.cells[6].innerText.replace(/"/g, '""');
+      csv += `"${student}","${status}","${lateLabels}","${eventDate}","${dropOff}","${pickUp}","${payment}"\n`;
     }
   });
 
@@ -297,4 +308,210 @@ function formatStoredTime(arrivalTime) {
 
 function formatArrivalTime(record) {
   return formatStoredTime(record.arrivalTime) || formatTime(record.timestamp);
+}
+
+function getSortTimestamp(record) {
+  return record.pickUpTimestamp || record.dropOffTimestamp || record.timestamp || 0;
+}
+
+function getRecordStatus(record) {
+  if (record.pickUpTimestamp) {
+    return 'Picked up';
+  }
+
+  if (record.dropOffTimestamp || record.timestamp) {
+    return 'Present';
+  }
+
+  return 'Not arrived';
+}
+
+function getStatusClass(status) {
+  const normalized = String(status || '').toLowerCase().replace(/\s+/g, '-');
+  return normalized || 'not-arrived';
+}
+
+function formatPersonTime(personName, storedTime, timestamp) {
+  const time = formatStoredTime(storedTime) || formatTime(timestamp);
+  if (!personName && !time) {
+    return '';
+  }
+
+  if (!personName) {
+    return time;
+  }
+
+  if (!time) {
+    return personName;
+  }
+
+  return `${personName} at ${time}`;
+}
+
+function formatLatePickUpPayment(record) {
+  if (!record.pickUpLateReason) {
+    return '';
+  }
+
+  const status = record.pickUpLatePaymentConfirmed ? 'Confirmed $10 to @phcs1166' : 'Not confirmed';
+  const receipt = record.pickUpLatePaymentReceipt ? 'Receipt uploaded' : 'Receipt missing';
+  return `${status}; ${receipt}`;
+}
+
+function renderLatePickUpPayment(record, index) {
+  const status = formatLatePickUpPayment(record);
+  if (!status) {
+    return '';
+  }
+
+  const receiptButton = record.pickUpLatePaymentReceipt
+    ? ` <button type="button" class="link-button" onclick="viewLatePickUpReceipt(${index})">View receipt</button>`
+    : '';
+
+  return `${escapeHtml(status)}${receiptButton}`;
+}
+
+function viewLatePickUpReceipt(index) {
+  const record = currentRecords[index];
+  if (!record?.pickUpLatePaymentReceipt || !authenticated || !authHeader) {
+    return alert('Receipt is not available.');
+  }
+
+  fetch(`/api/late-pickup-receipts/${encodeURIComponent(record.pickUpLatePaymentReceipt)}`, {
+    headers: { Authorization: authHeader },
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(await response.text() || 'Unable to load receipt');
+      }
+      return response.blob();
+    })
+    .then((blob) => {
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    })
+    .catch((error) => {
+      console.error('Receipt load error:', error);
+      alert(`Could not load receipt: ${error.message}`);
+    });
+}
+
+function loadScheduleSettings() {
+  fetch('/api/admin/schedule-settings', { headers: { Authorization: authHeader } })
+    .then(async (response) => {
+      if (!response.ok) {
+        const errorText = await response.text();
+        if (response.status === 401 || response.status === 403) {
+          logout();
+        }
+        throw new Error(errorText || 'Unable to load late cutoff times');
+      }
+      return response.json();
+    })
+    .then((settings) => {
+      document.getElementById("lateDropOffAfter").value = settings.lateDropOffAfter || "08:36";
+      document.getElementById("latePickUpAfter").value = settings.latePickUpAfter || "13:35";
+    })
+    .catch((error) => {
+      console.error('Schedule settings load error:', error);
+      document.getElementById("settingsMessage").innerText = error.message;
+    });
+}
+
+function saveScheduleSettings() {
+  const lateDropOffAfter = document.getElementById("lateDropOffAfter").value;
+  const latePickUpAfter = document.getElementById("latePickUpAfter").value;
+  const message = document.getElementById("settingsMessage");
+  message.innerText = "Saving...";
+
+  fetch('/api/admin/schedule-settings', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: authHeader,
+    },
+    body: JSON.stringify({ lateDropOffAfter, latePickUpAfter }),
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        const error = await response.json().catch(async () => ({ error: await response.text() }));
+        if (response.status === 401 || response.status === 403) {
+          logout();
+        }
+        throw new Error(error.error || 'Unable to save late cutoff times');
+      }
+      return response.json();
+    })
+    .then(() => {
+      message.innerText = "Saved";
+      loadData();
+    })
+    .catch((error) => {
+      console.error('Schedule settings save error:', error);
+      message.innerText = error.message;
+    });
+}
+
+function formatTimingFlags(flags) {
+  if (!Array.isArray(flags) || flags.length === 0) {
+    return '';
+  }
+
+  return flags.map((flag) => (
+    `<span class="timing-flag ${escapeHtml(getTimingFlagClass(flag))}">${escapeHtml(flag)}</span>`
+  )).join(' ');
+}
+
+function getTimingFlagClass(flag) {
+  return String(flag || '').toLowerCase().replace(/\s+/g, '-');
+}
+
+function renderLateReasonsReport(records) {
+  const lateEntries = [];
+
+  records.forEach((record) => {
+    if (record.dropOffLateReason) {
+      lateEntries.push({
+        studentName: record.studentName,
+        label: 'Late Drop-off',
+        eventDate: record.eventDate || record.arrivalDate || '',
+        parentName: record.dropOffParentName || record.parentName || '',
+        time: formatStoredTime(record.dropOffTime || record.arrivalTime) || formatTime(record.dropOffTimestamp || record.timestamp),
+        reason: record.dropOffLateReason,
+      });
+    }
+
+    if (record.pickUpLateReason) {
+      lateEntries.push({
+        studentName: record.studentName,
+        label: 'Late Pick-up',
+        eventDate: record.eventDate || record.arrivalDate || '',
+        parentName: record.pickUpParentName || '',
+        time: formatStoredTime(record.pickUpTime) || formatTime(record.pickUpTimestamp),
+        reason: record.pickUpLateReason,
+        payment: formatLatePickUpPayment(record),
+      });
+    }
+  });
+
+  const report = document.getElementById("lateReasonsReport");
+  if (!lateEntries.length) {
+    report.innerHTML = "";
+    return;
+  }
+
+  report.innerHTML = `
+    <h2>Late Reasons</h2>
+    ${lateEntries.map((entry) => `
+      <div class="late-reason-entry">
+        <h3>${escapeHtml(entry.label)} - ${escapeHtml(entry.studentName)}</h3>
+        <p><strong>Date:</strong> ${escapeHtml(entry.eventDate)}</p>
+        <p><strong>Time:</strong> ${escapeHtml(entry.time)}</p>
+        <p><strong>Parent:</strong> ${escapeHtml(entry.parentName)}</p>
+        <p><strong>Reason:</strong> ${escapeHtml(entry.reason)}</p>
+        ${entry.payment ? `<p><strong>Payment:</strong> ${escapeHtml(entry.payment)}</p>` : ''}
+      </div>
+    `).join('')}
+  `;
 }

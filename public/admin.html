@@ -38,6 +38,23 @@
         </div>
       </div>
 
+      <section class="announcement" aria-labelledby="email-report-announcement-title">
+        <p class="announcement-label">Announcement</p>
+        <h2 id="email-report-announcement-title">Email report setup is now available</h2>
+        <p>
+          Admins can set up attendance reports by adding a sender email, entering that email's app password,
+          and saving the report receiver addresses in the Admin Dashboard.
+        </p>
+        <ul>
+          <li>The sender email automatically receives a copy of every report.</li>
+          <li>Manual reports can be sent right away from the dashboard.</li>
+          <li>Automatic reports send on the schedule you choose after setup is complete.</li>
+        </ul>
+        <a class="announcement-link" href="https://youtu.be/puoKCNfOLag" target="_blank" rel="noopener">
+          Watch the setup video
+        </a>
+      </section>
+
       <div id="adminToolbar" class="toolbar">
         <input id="search" type="search" placeholder="Search names" oninput="filterTable()" />
         <button id="exportBtn" type="button" onclick="exportCSV()">Export CSV</button>
@@ -45,19 +62,41 @@
         <button id="print" type="button" onclick="printPage()">Print / Save PDF</button>
       </div>
 
+      <form id="scheduleSettings" class="settings-panel" onsubmit="saveScheduleSettings(); return false;">
+        <h2>Late Cutoff Times</h2>
+        <div class="settings-field">
+          <label for="lateDropOffAfter">Late drop-off at or after</label>
+          <input id="lateDropOffAfter" type="time" required />
+        </div>
+        <div class="settings-field">
+          <label for="latePickUpAfter">Late pick-up at or after</label>
+          <input id="latePickUpAfter" type="time" required />
+        </div>
+        <div class="settings-actions">
+          <button type="submit">Save Times</button>
+          <span id="settingsMessage"></span>
+        </div>
+      </form>
+
       <div id="recordsSection">
         <table>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Arrival Date</th>
-              <th>Arrival Time</th>
+              <th>Student</th>
+              <th>Status</th>
+              <th>Late Labels</th>
+              <th>Event Date</th>
+              <th>Drop-off</th>
+              <th>Pick-up</th>
+              <th>Payment</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody id="data"></tbody>
         </table>
       </div>
+
+      <section id="lateReasonsReport" class="print-only"></section>
     </div>
   </main>
 </body>
