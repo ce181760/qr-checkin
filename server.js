@@ -780,11 +780,27 @@ function normalizeAdminEmail(email) {
   return defaultEmail;
 }
 
+function normalizeEmailValue(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizePhoneValue(value) {
+  return String(value || '').replace(/[^\d]/g, '');
+}
+
+function identifierEmailMatches(identifier, email) {
+  return Boolean(identifier && email && normalizeEmailValue(identifier) === normalizeEmailValue(email));
+}
+
+function identifierPhoneMatches(identifier, phone) {
+  return Boolean(identifier && phone && normalizePhoneValue(identifier) === normalizePhoneValue(phone));
+}
+
 function normalizeAdminProfile(profile) {
-  const email = normalizeAdminEmail(profile.email);
+  const email = normalizeAdminEmail(process.env.ADMIN_EMAIL !== undefined ? process.env.ADMIN_EMAIL : profile.email);
   return {
-    username: profile.username || ADMIN_USER,
-    password: profile.password || ADMIN_PASS,
+    username: process.env.ADMIN_USER !== undefined ? process.env.ADMIN_USER : (profile.username || ADMIN_USER),
+    password: process.env.ADMIN_PASS !== undefined ? process.env.ADMIN_PASS : (profile.password || ADMIN_PASS),
     email,
     phone: profile.phone || profile.phone_number || '',
     reportEmail: profile.reportEmail || profile.report_email || REPORT_EMAIL || profile.email || email,
@@ -1589,8 +1605,11 @@ app.post('/api/admin/login', async (req, res) => {
   }
 
   const profile = await readAdminProfile();
-  const validIdentifiers = [profile.username, profile.email, profile.phone].filter(Boolean);
-  if (validIdentifiers.includes(identifier) && password === profile.password) {
+  const identifierMatches = identifier === profile.username
+    || identifierEmailMatches(identifier, profile.email)
+    || identifierPhoneMatches(identifier, profile.phone);
+
+  if (identifierMatches && password === profile.password) {
     return res.json({ username: profile.username, email: profile.email, phone: profile.phone, passwordChangeRequired: isPasswordChangeRequired(profile) });
   }
 
@@ -1681,8 +1700,8 @@ app.post('/api/admin/forgot-username', async (req, res) => {
       normalizedProfile.email = identifier;
     }
 
-    const emailMatches = identifier && normalizedProfile.email && identifier === normalizedProfile.email;
-    const phoneMatches = identifier && normalizedProfile.phone && identifier === normalizedProfile.phone;
+    const emailMatches = identifierEmailMatches(identifier, normalizedProfile.email);
+    const phoneMatches = identifierPhoneMatches(identifier, normalizedProfile.phone);
     if (!emailMatches && !phoneMatches) {
       return res.status(400).json({ error: 'No matching admin account' });
     }
@@ -1712,12 +1731,12 @@ app.post('/api/admin/forgot', async (req, res) => {
 
   try {
     const profile = await readAdminProfile();
-    if (profile.email === 'admin@example.com' && identifier && identifier.includes('@')) {
+    if (profile.email === 'admin@example.com' && identifier.includes('@')) {
       profile.email = identifier;
     }
 
-    const emailMatches = identifier && profile.email && identifier === profile.email;
-    const usernameMatches = identifier && identifier === profile.username;
+    const emailMatches = identifierEmailMatches(identifier, profile.email);
+    const usernameMatches = identifier && profile.username && identifier === profile.username;
     if (!emailMatches && !usernameMatches) {
       return res.status(400).json({ error: 'No matching admin account' });
     }
@@ -1947,7 +1966,9 @@ app.listen(PORT, async () => {
   console.log(`Event check-in app running at http://localhost:${PORT}`);
   console.log(`Admin page: http://localhost:${PORT}/admin`);
   console.log(`Admin username: ${profile.username}`);
+  console.log(`Admin email: ${profile.email}`);
   console.log(`Admin storage: ${dbPool ? 'database' : adminFile}`);
+  console.log(`Admin env override: USER=${Boolean(process.env.ADMIN_USER)}, EMAIL=${Boolean(process.env.ADMIN_EMAIL)}, PASS=${Boolean(process.env.ADMIN_PASS)}`);
 
   await checkAndSendPasswordReminder();
   await checkAndSendDailyReport();
