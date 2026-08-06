@@ -353,6 +353,14 @@ function formatLatePickUpPayment(record) {
     return '';
   }
 
+  const method = String(record.pickUpLatePaymentMethod || 'venmo').toLowerCase();
+  if (method === 'cash') {
+    if (record.pickUpLatePaymentApproved) {
+      return `Cash payment approved by ${record.pickUpLatePaymentAdminSignature || 'admin'}`;
+    }
+    return 'Cash payment pending admin approval';
+  }
+
   const status = record.pickUpLatePaymentConfirmed ? 'Confirmed $10 to @phcs1166' : 'Not confirmed';
   const receipt = record.pickUpLatePaymentReceipt ? 'Receipt uploaded' : 'Receipt missing';
   return `${status}; ${receipt}`;

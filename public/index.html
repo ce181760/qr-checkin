@@ -33,17 +33,28 @@
       </div>
       <div id="latePaymentGroup" class="late-payment-group" hidden>
         <p class="late-payment-instructions">
-          Late pick-up requires a $10 payment by Venmo to <strong>@phcs1166</strong>.
+          Late pick-up requires a $10 fee. Choose how it will be paid.
         </p>
-        <a class="venmo-payment-link" href="https://venmo.com/phcs1166?txn=pay&amp;amount=10" target="_blank" rel="noopener">
-          Pay $10 with Venmo
-        </a>
-        <label for="latePaymentReceipt">Receipt screenshot</label>
-        <input id="latePaymentReceipt" name="latePaymentReceipt" type="file" accept="image/*" />
-        <label class="checkbox-field" for="latePaymentConfirmed">
-          <input id="latePaymentConfirmed" name="latePaymentConfirmed" type="checkbox" />
-          I paid the $10 late pick-up fee to @phcs1166 and uploaded the receipt.
-        </label>
+        <label for="latePaymentMethod">Payment method</label>
+        <select id="latePaymentMethod" name="latePaymentMethod">
+          <option value="venmo">Venmo</option>
+          <option value="cash">Cash</option>
+        </select>
+        <label for="adminSignature">Admin signature</label>
+        <input id="adminSignature" name="adminSignature" type="text" placeholder="Admin name or initials" />
+        <div id="venmoPaymentSection">
+          <a class="venmo-payment-link" href="https://venmo.com/phcs1166?txn=pay&amp;amount=10" target="_blank" rel="noopener">
+            Pay $10 with Venmo
+          </a>
+          <p class="late-payment-instructions">
+            Venmo payments will be marked pending until an admin approves them with a signature.
+          </p>
+        </div>
+        <div id="cashPaymentSection" hidden>
+          <p class="late-payment-instructions">
+            Cash payments will be marked pending until an admin approves them with a signature.
+          </p>
+        </div>
       </div>
       <button type="submit">Submit</button>
     </form>
