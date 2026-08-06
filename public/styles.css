@@ -316,6 +316,24 @@ tbody td {
   min-width: 12rem;
 }
 
+.override-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: end;
+}
+
+@media (max-width: 900px) {
+  .settings-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .override-panel {
+    grid-template-columns: 1fr;
+  }
+}
+
 .daily-report-settings {
   margin: 1.5rem 0 1rem;
 }

@@ -2,11 +2,14 @@ let authenticated = false;
 let authHeader = null;
 let currentRecords = [];
 let currentProfile = null;
+let scheduleOverrides = [];
 const ARRIVAL_TIME_ZONE = 'America/New_York';
 
 window.addEventListener('DOMContentLoaded', initAdmin);
 
 function initAdmin() {
+  setupScheduleOverrideControls();
+
   const storedAuthHeader = localStorage.getItem('eventCheckinAdminAuthHeader');
   if (!storedAuthHeader) {
     return;
@@ -16,16 +19,31 @@ function initAdmin() {
   checkAdminSession()
     .then((profile) => {
       authenticated = true;
-      if (profile.passwordChangeRequired) {
-        window.location.href = '/admin/account?force=true';
-      } else {
-        showDashboard();
-      }
+      showDashboard();
     })
     .catch(() => {
       localStorage.removeItem('eventCheckinAdminAuthHeader');
       authHeader = null;
     });
+}
+
+function setupScheduleOverrideControls() {
+  const overrideType = document.getElementById("overrideType");
+  const overrideValue = document.getElementById("overrideValue");
+  const overrideValueLabel = document.getElementById("overrideValueLabel");
+
+  if (!overrideType || !overrideValue || !overrideValueLabel) {
+    return;
+  }
+
+  overrideType.addEventListener('change', () => {
+    const isDate = overrideType.value === 'date';
+    overrideValueLabel.innerText = isDate ? 'Date' : 'Day';
+    overrideValue.type = isDate ? 'date' : 'text';
+    overrideValue.placeholder = isDate ? 'Select a date' : 'Wednesday';
+  });
+
+  overrideType.dispatchEvent(new Event('change'));
 }
 
 function showDashboard() {
@@ -72,11 +90,7 @@ function login() {
       authHeader = `Basic ${btoa(`${identifier}:${password}`)}`;
       localStorage.setItem('eventCheckinAdminAuthHeader', authHeader);
       currentProfile = profile;
-      if (profile.passwordChangeRequired) {
-        window.location.href = '/admin/account?force=true';
-      } else {
-        showDashboard();
-      }
+      showDashboard();
     })
     .catch((error) => {
       document.getElementById("error").innerText = error.message;
@@ -136,9 +150,6 @@ function loadProfile() {
     .then((profile) => {
       currentProfile = profile;
       document.getElementById("userName").innerText = `Logged in as ${profile.username}`;
-      if (profile.passwordChangeRequired) {
-        window.location.href = '/admin/account?force=true';
-      }
     })
     .catch((error) => {
       console.error('Profile load error:', error);
@@ -420,11 +431,98 @@ function loadScheduleSettings() {
     .then((settings) => {
       document.getElementById("lateDropOffAfter").value = settings.lateDropOffAfter || "08:36";
       document.getElementById("latePickUpAfter").value = settings.latePickUpAfter || "13:35";
+      scheduleOverrides = Array.isArray(settings.overrides) ? settings.overrides : [];
+      renderScheduleOverrides();
     })
     .catch((error) => {
       console.error('Schedule settings load error:', error);
       document.getElementById("settingsMessage").innerText = error.message;
     });
+}
+
+function addScheduleOverride() {
+  const overrideType = document.getElementById("overrideType").value;
+  const overrideValue = document.getElementById("overrideValue").value.trim();
+  const overrideDropOffTime = document.getElementById("overrideDropOffTime").value;
+  const overridePickUpTime = document.getElementById("overridePickUpTime").value;
+
+  if (!overrideValue) {
+    document.getElementById("settingsMessage").innerText = 'Enter a day or date to override.';
+    return;
+  }
+
+  if (!overrideDropOffTime && !overridePickUpTime) {
+    document.getElementById("settingsMessage").innerText = 'Enter at least one override time.';
+    return;
+  }
+
+  if (overrideDropOffTime) {
+    scheduleOverrides.push({
+      type: overrideType,
+      value: overrideValue,
+      action: 'drop_off',
+      time: overrideDropOffTime,
+    });
+  }
+
+  if (overridePickUpTime) {
+    scheduleOverrides.push({
+      type: overrideType,
+      value: overrideValue,
+      action: 'pick_up',
+      time: overridePickUpTime,
+    });
+  }
+
+  renderScheduleOverrides();
+  document.getElementById("overrideValue").value = "";
+  document.getElementById("overrideDropOffTime").value = "";
+  document.getElementById("overridePickUpTime").value = "";
+  document.getElementById("settingsMessage").innerText = "Override(s) added";
+}
+
+function removeScheduleOverride(index) {
+  scheduleOverrides.splice(index, 1);
+  renderScheduleOverrides();
+  document.getElementById("settingsMessage").innerText = "Override removed";
+}
+
+function renderScheduleOverrides() {
+  const container = document.getElementById("scheduleOverridesList");
+  if (!container) {
+    return;
+  }
+
+  if (!scheduleOverrides.length) {
+    container.innerHTML = '<p class="late-payment-instructions">No special-day overrides yet.</p>';
+    return;
+  }
+
+  const dropOffOverrides = scheduleOverrides.filter((override) => override.action === 'drop_off');
+  const pickUpOverrides = scheduleOverrides.filter((override) => override.action === 'pick_up');
+
+  const renderOverrides = (overrides, heading, actionLabel) => {
+    if (!overrides.length) {
+      return '';
+    }
+
+    return `
+      <div style="margin-top:0.75rem;">
+        <strong>${escapeHtml(heading)}</strong>
+        ${overrides.map((override, index) => {
+          const globalIndex = scheduleOverrides.findIndex((entry) => entry === override && entry.action === override.action && entry.time === override.time && entry.value === override.value && entry.type === override.type);
+          return `
+            <div class="override-entry" style="margin-top:0.5rem; padding:0.65rem 0.75rem; border:1px solid #e2e8f0; border-radius:8px; background:#ffffff; display:flex; justify-content:space-between; align-items:center; gap:1rem;">
+              <div>${escapeHtml(override.type === 'date' ? 'Date' : 'Day')}: ${escapeHtml(override.value)} • ${escapeHtml(actionLabel)} • ${escapeHtml(override.time)}</div>
+              <button type="button" class="link-button" onclick="removeScheduleOverride(${globalIndex})">Remove</button>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  };
+
+  container.innerHTML = `${renderOverrides(dropOffOverrides, 'Drop-off overrides', 'Drop-off')} ${renderOverrides(pickUpOverrides, 'Pick-up overrides', 'Pick-up')}`;
 }
 
 function saveScheduleSettings() {
@@ -439,7 +537,7 @@ function saveScheduleSettings() {
       'Content-Type': 'application/json',
       Authorization: authHeader,
     },
-    body: JSON.stringify({ lateDropOffAfter, latePickUpAfter }),
+    body: JSON.stringify({ lateDropOffAfter, latePickUpAfter, overrides: scheduleOverrides }),
   })
     .then(async (response) => {
       if (!response.ok) {

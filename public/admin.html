@@ -74,6 +74,34 @@
           <label for="latePickUpAfter">Late pick-up at or after</label>
           <input id="latePickUpAfter" type="time" required />
         </div>
+
+        <div class="override-panel">
+          <div class="settings-field">
+            <label for="overrideType">Override type</label>
+            <select id="overrideType">
+              <option value="day">Day of week</option>
+              <option value="date">Specific date</option>
+            </select>
+          </div>
+          <div class="settings-field">
+            <label id="overrideValueLabel" for="overrideValue">Day</label>
+            <input id="overrideValue" type="text" placeholder="Wednesday" />
+          </div>
+          <div class="settings-field">
+            <label for="overrideDropOffTime">Drop-off override time</label>
+            <input id="overrideDropOffTime" type="time" />
+          </div>
+          <div class="settings-field">
+            <label for="overridePickUpTime">Pick-up override time</label>
+            <input id="overridePickUpTime" type="time" />
+          </div>
+        </div>
+        <div class="settings-actions">
+          <button type="button" onclick="addScheduleOverride()">Add override(s)</button>
+        </div>
+
+        <div id="scheduleOverridesList"></div>
+
         <div class="settings-actions">
           <button type="submit">Save Times</button>
           <span id="settingsMessage"></span>
