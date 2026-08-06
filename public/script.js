@@ -5,6 +5,11 @@ window.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('input[name="action"]').forEach((input) => {
     input.addEventListener('change', resetLateReasonPrompt);
   });
+
+  const paymentMethodSelect = document.getElementById('latePaymentMethod');
+  if (paymentMethodSelect) {
+    paymentMethodSelect.addEventListener('change', toggleLatePaymentSections);
+  }
 });
 
 async function checkIn() {
@@ -12,9 +17,8 @@ async function checkIn() {
   const parentName = document.getElementById("parentName").value.trim();
   const action = document.querySelector('input[name="action"]:checked').value;
   const lateReason = document.getElementById("lateReason").value.trim();
-  const latePaymentConfirmed = document.getElementById("latePaymentConfirmed").checked;
-  const receiptInput = document.getElementById("latePaymentReceipt");
-  const receiptFile = receiptInput.files[0] || null;
+  const latePaymentMethod = document.getElementById("latePaymentMethod").value;
+  const adminSignature = document.getElementById("adminSignature").value.trim();
 
   if (studentName === "" || parentName === "") {
     alert("Enter student name and parent name");
@@ -26,21 +30,8 @@ async function checkIn() {
     return;
   }
 
-  if (latePaymentRequired && !latePaymentConfirmed) {
-    alert("Confirm the $10 late pick-up payment to @phcs1166");
-    return;
-  }
-
-  if (latePaymentRequired && !receiptFile) {
-    alert("Upload a receipt screenshot for the late pick-up payment");
-    return;
-  }
-
-  let latePaymentReceipt = null;
-  try {
-    latePaymentReceipt = receiptFile ? await readReceiptFile(receiptFile) : null;
-  } catch (error) {
-    alert(error.message);
+  if (latePaymentRequired && !adminSignature) {
+    alert("Enter the admin signature for the late pick-up payment");
     return;
   }
 
@@ -54,8 +45,8 @@ async function checkIn() {
       parentName,
       action,
       lateReason,
-      latePaymentConfirmed,
-      latePaymentReceipt
+      latePaymentMethod,
+      adminSignature
     })
   })
   .then(async (response) => {
@@ -95,38 +86,13 @@ async function checkIn() {
   });
 }
 
-function readReceiptFile(file) {
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-  const maxBytes = 5 * 1024 * 1024;
-
-  if (!allowedTypes.includes(file.type)) {
-    return Promise.reject(new Error("Receipt must be a JPG, PNG, GIF, or WebP image"));
-  }
-
-  if (file.size > maxBytes) {
-    return Promise.reject(new Error("Receipt image must be 5 MB or smaller"));
-  }
-
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve({
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      dataUrl: reader.result,
-    });
-    reader.onerror = () => reject(new Error("Could not read the receipt image"));
-    reader.readAsDataURL(file);
-  });
-}
-
 function showLateReasonPrompt(error) {
   const actionLabel = error.action === 'pick_up' ? 'pick-up' : 'drop-off';
   const group = document.getElementById("lateReasonGroup");
   const lateReason = document.getElementById("lateReason");
   const paymentGroup = document.getElementById("latePaymentGroup");
-  const latePaymentConfirmed = document.getElementById("latePaymentConfirmed");
-  const latePaymentReceipt = document.getElementById("latePaymentReceipt");
+  const latePaymentMethod = document.getElementById("latePaymentMethod");
+  const adminSignature = document.getElementById("adminSignature");
   const message = document.getElementById("message");
 
   lateReasonRequired = true;
@@ -134,11 +100,11 @@ function showLateReasonPrompt(error) {
   group.hidden = false;
   lateReason.required = true;
   paymentGroup.hidden = !latePaymentRequired;
-  latePaymentConfirmed.required = latePaymentRequired;
-  latePaymentReceipt.required = latePaymentRequired;
+  adminSignature.required = latePaymentRequired;
+  toggleLatePaymentSections();
   lateReason.focus();
   message.innerText = latePaymentRequired
-    ? `This ${actionLabel} is marked late. Please enter a reason, pay the $10 late pick-up fee to @phcs1166, and upload the receipt.`
+    ? `This ${actionLabel} is marked late. Please enter a reason and complete the late pick-up fee payment.`
     : `This ${actionLabel} is marked late. Please enter a reason.`;
 }
 
@@ -146,8 +112,8 @@ function resetLateReasonPrompt() {
   const group = document.getElementById("lateReasonGroup");
   const lateReason = document.getElementById("lateReason");
   const paymentGroup = document.getElementById("latePaymentGroup");
-  const latePaymentConfirmed = document.getElementById("latePaymentConfirmed");
-  const latePaymentReceipt = document.getElementById("latePaymentReceipt");
+  const latePaymentMethod = document.getElementById("latePaymentMethod");
+  const adminSignature = document.getElementById("adminSignature");
   const message = document.getElementById("message");
 
   lateReasonRequired = false;
@@ -156,9 +122,21 @@ function resetLateReasonPrompt() {
   lateReason.required = false;
   lateReason.value = "";
   paymentGroup.hidden = true;
-  latePaymentConfirmed.required = false;
-  latePaymentConfirmed.checked = false;
-  latePaymentReceipt.required = false;
-  latePaymentReceipt.value = "";
+  latePaymentMethod.value = "venmo";
+  adminSignature.required = false;
+  adminSignature.value = "";
+  toggleLatePaymentSections();
   message.innerText = "";
+}
+
+function toggleLatePaymentSections() {
+  const paymentMethod = document.getElementById("latePaymentMethod").value;
+  const venmoSection = document.getElementById("venmoPaymentSection");
+  const cashSection = document.getElementById("cashPaymentSection");
+  const adminSignature = document.getElementById("adminSignature");
+
+  const isCash = paymentMethod === 'cash';
+  venmoSection.hidden = isCash;
+  cashSection.hidden = !isCash;
+  adminSignature.required = latePaymentRequired;
 }
