@@ -4,6 +4,7 @@ const path = require('path');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const { Pool } = require('pg');
+const { getEffectiveScheduleTime, normalizeScheduleSettings } = require('./schedule-settings');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -204,17 +205,6 @@ function normalizeSenderSettings(profile = {}) {
   };
 }
 
-function normalizeScheduleSettings(settings = {}) {
-  const lateDropOffAfter = isValidTimeValue(settings.lateDropOffAfter || settings.late_drop_off_after)
-    ? (settings.lateDropOffAfter || settings.late_drop_off_after)
-    : DEFAULT_LATE_DROP_OFF_AFTER;
-  const latePickUpAfter = isValidTimeValue(settings.latePickUpAfter || settings.late_pick_up_after)
-    ? (settings.latePickUpAfter || settings.late_pick_up_after)
-    : DEFAULT_LATE_PICK_UP_AFTER;
-
-  return { lateDropOffAfter, latePickUpAfter };
-}
-
 function normalizeDailyReportSettings(settings = {}) {
   const source = settings || {};
   const reportMode = source.reportMode || source.report_mode;
@@ -293,7 +283,7 @@ function getTimingFlags(record, scheduleSettings) {
 function getActionTimingStatus(action, timestamp, scheduleSettings) {
   const settings = normalizeScheduleSettings(scheduleSettings);
   const actionMinutes = timestampToLocalMinutes(timestamp);
-  const cutoff = action === 'pick_up' ? settings.latePickUpAfter : settings.lateDropOffAfter;
+  const cutoff = getEffectiveScheduleTime(action, timestamp, settings);
   const cutoffMinutes = timeToMinutes(cutoff);
 
   if (actionMinutes !== null && cutoffMinutes !== null && actionMinutes >= cutoffMinutes) {

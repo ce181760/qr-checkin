@@ -47,10 +47,6 @@ function login() {
     .then((profile) => {
       authHeader = `Basic ${btoa(`${identifier}:${password}`)}`;
       localStorage.setItem('eventCheckinAdminAuthHeader', authHeader);
-      if (profile.passwordChangeRequired) {
-        window.location.href = '/admin/account?force=true';
-        return;
-      }
       showReportSettingsPage();
       loadReportSettings();
     })

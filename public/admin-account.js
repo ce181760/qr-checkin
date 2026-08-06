@@ -94,10 +94,7 @@ function showAccountPage(profile) {
   document.getElementById('profileMessage').innerText = '';
 
   const banner = document.getElementById('passwordReminderBanner');
-  if (forcePasswordChange || profile.passwordChangeRequired) {
-    banner.style.display = 'block';
-    banner.innerText = 'Your password reminder is active. Please change your password before continuing.';
-  } else {
+  if (banner) {
     banner.style.display = 'none';
   }
 }
