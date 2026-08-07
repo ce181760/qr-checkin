@@ -506,7 +506,7 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
   }
 
   if (timingStatus === 'Late' && attendanceAction === 'pick_up' && !trimmedAdminSignature) {
-    throw createLatePickUpRequirementError('Please enter the admin signature for the late pick-up payment.', actionTime);
+    throw createLatePickUpRequirementError('Please enter the admin approval signature or initials for the late pick-up payment.', actionTime);
   }
 
   if (dbPool) {
@@ -553,7 +553,7 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
       }
     } else {
       if (!existing.rows.length || !existing.rows[0].drop_off_timestamp) {
-        throw new Error('This student must be dropped off before they can be picked up.');
+        throw new Error('Pick-up can only be saved after the student has been dropped off today.');
       }
 
       if (existing.rows[0].pick_up_timestamp) {
@@ -628,7 +628,7 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
     }
   } else {
     if (!session?.dropOffTimestamp) {
-      throw new Error('This student must be dropped off before they can be picked up.');
+      throw new Error('Pick-up can only be saved after the student has been dropped off today.');
     }
 
     if (session.pickUpTimestamp) {
