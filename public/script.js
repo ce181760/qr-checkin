@@ -31,7 +31,7 @@ async function checkIn() {
   }
 
   if (latePaymentRequired && !adminSignature) {
-    alert("Enter the admin signature for the late pick-up payment");
+    alert("Enter the admin approval signature or initials for the late pick-up payment");
     return;
   }
 
