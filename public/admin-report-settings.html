@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Report Receivers</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/admin-styles.css" />
+  <script src="/admin-report-settings.js" defer></script>
+</head>
+<body>
+  <main>
+    <div id="loginBox">
+      <img class="site-logo" src="/school-logo.jpeg" alt="School logo" />
+      <h1>Admin Login</h1>
+      <form id="loginForm" onsubmit="login(); return false;">
+        <label for="username">Username, email, or phone</label>
+        <input id="username" type="text" placeholder="Username, email, or phone" required />
+
+        <label for="password">Password</label>
+        <input id="password" type="password" required />
+
+        <button type="submit">Login</button>
+      </form>
+      <div id="error" style="color: red; margin-top: 0.5rem; text-align: center;"></div>
+    </div>
+
+    <div id="reportSettingsPage" style="display: none;">
+      <img class="site-logo site-logo-dashboard" src="/school-logo.jpeg" alt="School logo" />
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <h1>Report Receivers</h1>
+        <div>
+          <button type="button" onclick="window.location.href='/admin/account'">Back to Account</button>
+          <button type="button" onclick="logout()">Logout</button>
+        </div>
+      </div>
+
+      <form id="reportSettingsForm" onsubmit="saveReportSettings(); return false;">
+        <label for="receiverEmail">Report receiver email</label>
+        <input id="receiverEmail" type="email" autocomplete="email" />
+
+        <button type="button" onclick="addReportReceiver()">Add Receiver</button>
+        <button type="submit">Save Receivers</button>
+        <button type="button" onclick="emailDailyReport()">Email Daily Report</button>
+      </form>
+
+      <div id="receiverCount" style="margin-top: 1rem; color: #666;"></div>
+      <ul id="receiverList" style="padding-left: 1.25rem;"></ul>
+      <div id="reportSettingsMessage" style="margin-top: 1rem; min-height: 1.2rem;"></div>
+    </div>
+  </main>
+</body>
+</html>

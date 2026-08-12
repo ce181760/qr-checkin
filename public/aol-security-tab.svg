@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="150" viewBox="0 0 680 150" role="img" aria-label="AOL Security tab">
+  <rect width="680" height="150" fill="#ffffff"/>
+  <text x="32" y="54" font-family="Arial Black, Arial, sans-serif" font-size="42" fill="#000">AOL</text>
+  <line x1="0" y1="78" x2="680" y2="78" stroke="#e5e7eb"/>
+  <text x="32" y="112" font-family="Arial, sans-serif" font-size="16" fill="#334155">Overview</text>
+  <text x="140" y="112" font-family="Arial, sans-serif" font-size="16" fill="#334155">Personal info</text>
+  <rect x="246" y="84" width="96" height="44" rx="22" fill="#ffffff" stroke="#000" stroke-width="8"/>
+  <text x="268" y="112" font-family="Arial, sans-serif" font-size="16" fill="#334155">Security</text>
+  <text x="380" y="112" font-family="Arial, sans-serif" font-size="16" fill="#334155">Recent activity</text>
+  <text x="524" y="112" font-family="Arial, sans-serif" font-size="16" fill="#334155">Privacy controls</text>
+</svg>

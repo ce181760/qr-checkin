@@ -1,0 +1,54 @@
+/* Admin Dashboard Styles */
+
+#googleSignInBtn:hover {
+  opacity: 0.9;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(66, 133, 244, 0.4);
+}
+
+.toolbar button {
+  padding: 0.95rem 1.25rem;
+  margin-right: 0.5rem;
+  border: none;
+  border-radius: 10px;
+  background: #2563eb;
+  color: white;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.toolbar button:hover {
+  background: #1d4ed8;
+}
+
+#userEmail {
+  font-weight: 500;
+}
+
+#logoutBtn {
+  padding: 0.5rem 1rem;
+  background: #ef4444;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: background 0.2s;
+}
+
+#logoutBtn:hover {
+  background: #dc2626;
+}
+
+@media print {
+  #userEmail,
+  #logoutBtn,
+  .toolbar {
+    display: none;
+  }
+
+  table {
+    width: 100%;
+  }
+}
