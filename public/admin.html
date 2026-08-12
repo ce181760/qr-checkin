@@ -12,17 +12,14 @@
   <main>
     <!-- LOGIN SCREEN -->
     <div id="loginBox">
-      <img class="site-logo" src="/school-logo.jpeg" alt="School logo" />
       <h1>Admin Login</h1>
       <form id="loginForm" onsubmit="login(); return false;">
-        <label for="username">Username, email, or phone</label>
-        <input id="username" type="text" placeholder="Username, email, or phone" required />
+        <label for="username">Username</label>
+        <input id="username" type="text" required />
         <label for="password">Password</label>
         <input id="password" type="password" required />
         <button type="submit">Login</button>
-        <div style="margin-top:0.5rem;text-align:center;">
-          <a href="/admin/forgot">Forgot password?</a> | <a href="/admin/forgot-username">Forgot username?</a>
-        </div>
+        <div style="margin-top:0.5rem;text-align:center;"><a href="/admin/forgot">Forgot password?</a></div>
       </form>
       <div id="error" style="color: red; margin-top: 0.5rem; text-align: center;"></div>
     </div>
@@ -30,32 +27,12 @@
     <!-- DASHBOARD (hidden until login) -->
     <div id="dashboard" style="display: none;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-        <div style="display: flex; align-items: center; gap: 1rem;">
-          <img class="admin-logo" src="/school-logo.jpeg" alt="School logo" />
-          <h1>Attendance Dashboard</h1>
-        </div>
+        <h1>Attendance Dashboard</h1>
         <div>
           <span id="userName" style="margin-right: 1rem; color: #666;"></span>
           <button type="button" id="logoutBtn" onclick="logout()">Logout</button>
         </div>
       </div>
-
-      <section class="announcement" aria-labelledby="email-report-announcement-title">
-        <p class="announcement-label">Announcement</p>
-        <h2 id="email-report-announcement-title">Email report setup is now available</h2>
-        <p>
-          Admins can set up attendance reports by adding a sender email, entering that email's app password,
-          and saving the report receiver addresses in the Admin Dashboard.
-        </p>
-        <ul>
-          <li>The sender email automatically receives a copy of every report.</li>
-          <li>Manual reports can be sent right away from the dashboard.</li>
-          <li>Automatic reports send on the schedule you choose after setup is complete.</li>
-        </ul>
-        <a class="announcement-link" href="https://youtu.be/puoKCNfOLag" target="_blank" rel="noopener">
-          Watch the setup video
-        </a>
-      </section>
 
       <div id="adminToolbar" class="toolbar">
         <input id="search" type="search" placeholder="Search names" oninput="filterTable()" />
@@ -64,69 +41,18 @@
         <button id="print" type="button" onclick="printPage()">Print / Save PDF</button>
       </div>
 
-      <form id="scheduleSettings" class="settings-panel" onsubmit="saveScheduleSettings(); return false;">
-        <h2>Late Cutoff Times</h2>
-        <div class="settings-field">
-          <label for="lateDropOffAfter">Late drop-off at or after</label>
-          <input id="lateDropOffAfter" type="time" required />
-        </div>
-        <div class="settings-field">
-          <label for="latePickUpAfter">Late pick-up at or after</label>
-          <input id="latePickUpAfter" type="time" required />
-        </div>
-
-        <div class="override-panel">
-          <div class="settings-field">
-            <label for="overrideType">Override type</label>
-            <select id="overrideType">
-              <option value="day">Day of week</option>
-              <option value="date">Specific date</option>
-            </select>
-          </div>
-          <div class="settings-field">
-            <label id="overrideValueLabel" for="overrideValue">Day</label>
-            <input id="overrideValue" type="text" placeholder="Wednesday" />
-          </div>
-          <div class="settings-field">
-            <label for="overrideDropOffTime">Drop-off override time</label>
-            <input id="overrideDropOffTime" type="time" />
-          </div>
-          <div class="settings-field">
-            <label for="overridePickUpTime">Pick-up override time</label>
-            <input id="overridePickUpTime" type="time" />
-          </div>
-        </div>
-        <div class="settings-actions">
-          <button type="button" onclick="addScheduleOverride()">Add override(s)</button>
-        </div>
-
-        <div id="scheduleOverridesList"></div>
-
-        <div class="settings-actions">
-          <button type="submit">Save Times</button>
-          <span id="settingsMessage"></span>
-        </div>
-      </form>
-
       <div id="recordsSection">
         <table>
           <thead>
             <tr>
-              <th>Student</th>
-              <th>Status</th>
-              <th>Late Labels</th>
-              <th>Event Date</th>
-              <th>Drop-off</th>
-              <th>Pick-up</th>
-              <th>Payment</th>
+              <th>Name</th>
+              <th>Check-in Time</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody id="data"></tbody>
         </table>
       </div>
-
-      <section id="lateReasonsReport" class="print-only"></section>
     </div>
   </main>
 </body>

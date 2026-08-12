@@ -25,11 +25,11 @@ function initAccountPage() {
 }
 
 function login() {
-  const identifier = document.getElementById('username').value.trim();
+  const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value;
 
-  if (!identifier || !password) {
-    showError('Username, email, or phone and password are required.');
+  if (!username || !password) {
+    showError('Username and password are required.');
     return;
   }
 
@@ -38,7 +38,7 @@ function login() {
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ identifier, password }),
+    body: JSON.stringify({ username, password }),
   })
     .then(async (response) => {
       if (!response.ok) {
@@ -48,7 +48,7 @@ function login() {
       return response.json();
     })
     .then((profile) => {
-      authHeader = `Basic ${btoa(`${identifier}:${password}`)}`;
+      authHeader = `Basic ${btoa(`${username}:${password}`)}`;
       localStorage.setItem('eventCheckinAdminAuthHeader', authHeader);
       forcePasswordChange = profile.passwordChangeRequired === true;
       showAccountPage(profile);
@@ -89,12 +89,14 @@ function showAccountPage(profile) {
   currentProfile = profile;
   document.getElementById('profileUsername').value = profile.username;
   document.getElementById('profileEmail').value = profile.email;
-  document.getElementById('profilePhone').value = profile.phone || '';
   document.getElementById('profilePassword').value = '';
   document.getElementById('profileMessage').innerText = '';
 
   const banner = document.getElementById('passwordReminderBanner');
-  if (banner) {
+  if (forcePasswordChange || profile.passwordChangeRequired) {
+    banner.style.display = 'block';
+    banner.innerText = 'Your password reminder is active. Please change your password before continuing.';
+  } else {
     banner.style.display = 'none';
   }
 }
@@ -102,7 +104,6 @@ function showAccountPage(profile) {
 function saveProfile() {
   const username = document.getElementById('profileUsername').value.trim();
   const email = document.getElementById('profileEmail').value.trim();
-  const phone = document.getElementById('profilePhone').value.trim();
   const password = document.getElementById('profilePassword').value;
   const passwordConfirm = document.getElementById('profilePasswordConfirm').value;
 
@@ -116,15 +117,13 @@ function saveProfile() {
     return;
   }
 
-  // Server will validate password reuse; do not expose or compare passwords client-side.
-
   fetch('/api/admin/profile', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: authHeader,
     },
-    body: JSON.stringify({ username, password, email, phone }),
+    body: JSON.stringify({ username, password, email }),
   })
     .then(async (response) => {
       if (!response.ok) {

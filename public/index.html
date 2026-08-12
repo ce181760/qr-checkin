@@ -3,60 +3,19 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Student Attendance</title>
+  <title>Name Check-In</title>
   <link rel="stylesheet" href="/styles.css" />
   <script src="/script.js" defer></script>
 </head>
 <body>
   <main>
-    <img class="site-logo" src="/school-logo.jpeg" alt="School logo" />
-    <h1>Student Attendance</h1>
+    <h1>Name Check-In</h1>
     <form id="checkin-form" onsubmit="checkIn(); return false;">
-      <fieldset class="action-options">
-        <legend>What are you doing?</legend>
-        <label>
-          <input type="radio" name="action" value="drop_off" checked />
-          Drop off
-        </label>
-        <label>
-          <input type="radio" name="action" value="pick_up" />
-          Pick up
-        </label>
-      </fieldset>
       <label for="studentName">Student name</label>
       <input id="studentName" name="studentName" type="text" required autocomplete="name" />
       <label for="parentName">Parent name</label>
       <input id="parentName" name="parentName" type="text" required autocomplete="name" />
-      <div id="lateReasonGroup" class="late-reason-group" hidden>
-        <label for="lateReason">Reason for being late</label>
-        <textarea id="lateReason" name="lateReason" rows="4"></textarea>
-      </div>
-      <div id="latePaymentGroup" class="late-payment-group" hidden>
-        <p class="late-payment-instructions">
-          Late pick-up requires a $10 fee. Choose how it will be paid.
-        </p>
-        <label for="latePaymentMethod">Payment method</label>
-        <select id="latePaymentMethod" name="latePaymentMethod">
-          <option value="venmo">Venmo</option>
-          <option value="cash">Cash</option>
-        </select>
-        <label for="adminSignature">Admin approval signature or initials</label>
-        <input id="adminSignature" name="adminSignature" type="text" placeholder="Admin name or initials" />
-        <div id="venmoPaymentSection">
-          <a class="venmo-payment-link" href="https://venmo.com/phcs1166?txn=pay&amp;amount=10" target="_blank" rel="noopener">
-            Pay $10 with Venmo
-          </a>
-          <p class="late-payment-instructions">
-            Venmo payments will be marked pending until an admin approves them with a signature.
-          </p>
-        </div>
-        <div id="cashPaymentSection" hidden>
-          <p class="late-payment-instructions">
-            Cash payments will be marked pending until an admin approves them with a signature.
-          </p>
-        </div>
-      </div>
-      <button type="submit">Submit</button>
+      <button type="submit">Check In</button>
     </form>
     <div id="message"></div>
   </main>
