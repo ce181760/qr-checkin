@@ -2,14 +2,12 @@ let authenticated = false;
 let authHeader = null;
 let currentRecords = [];
 let currentProfile = null;
-let scheduleOverrides = [];
+let autoRefreshInterval = null;
 const ARRIVAL_TIME_ZONE = 'America/New_York';
 
 window.addEventListener('DOMContentLoaded', initAdmin);
 
 function initAdmin() {
-  setupScheduleOverrideControls();
-
   const storedAuthHeader = localStorage.getItem('eventCheckinAdminAuthHeader');
   if (!storedAuthHeader) {
     return;
@@ -27,25 +25,6 @@ function initAdmin() {
     });
 }
 
-function setupScheduleOverrideControls() {
-  const overrideType = document.getElementById("overrideType");
-  const overrideValue = document.getElementById("overrideValue");
-  const overrideValueLabel = document.getElementById("overrideValueLabel");
-
-  if (!overrideType || !overrideValue || !overrideValueLabel) {
-    return;
-  }
-
-  overrideType.addEventListener('change', () => {
-    const isDate = overrideType.value === 'date';
-    overrideValueLabel.innerText = isDate ? 'Date' : 'Day';
-    overrideValue.type = isDate ? 'date' : 'text';
-    overrideValue.placeholder = isDate ? 'Select a date' : 'Wednesday';
-  });
-
-  overrideType.dispatchEvent(new Event('change'));
-}
-
 function showDashboard() {
   document.getElementById("loginBox").style.display = "none";
   document.getElementById("dashboard").style.display = "block";
@@ -55,11 +34,27 @@ function showDashboard() {
   loadProfile();
   loadScheduleSettings();
   loadData();
+  
+  // Start auto-refresh every 3 seconds
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval);
+  }
+  autoRefreshInterval = setInterval(() => {
+    if (authenticated && authHeader) {
+      loadData();
+    }
+  }, 3000);
 }
 
 function hideDashboard() {
   document.getElementById("loginBox").style.display = "block";
   document.getElementById("dashboard").style.display = "none";
+  
+  // Stop auto-refresh when logging out
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval);
+    autoRefreshInterval = null;
+  }
 }
 
 function login() {
@@ -431,98 +426,20 @@ function loadScheduleSettings() {
     .then((settings) => {
       document.getElementById("lateDropOffAfter").value = settings.lateDropOffAfter || "08:36";
       document.getElementById("latePickUpAfter").value = settings.latePickUpAfter || "13:35";
-      scheduleOverrides = Array.isArray(settings.overrides) ? settings.overrides : [];
-      renderScheduleOverrides();
+      
+      // Load Wednesday override time
+      const overrides = Array.isArray(settings.overrides) ? settings.overrides : [];
+      const wednesdayOverride = overrides.find(o => o.type === 'day' && o.value === 'Wednesday' && o.action === 'pick_up');
+      
+      if (wednesdayOverride) {
+        document.getElementById("wednesdayTimeInput").value = wednesdayOverride.time;
+        document.getElementById("wednesdayTimeDisplay").innerText = formatTimeAmPm(wednesdayOverride.time);
+      }
     })
     .catch((error) => {
       console.error('Schedule settings load error:', error);
       document.getElementById("settingsMessage").innerText = error.message;
     });
-}
-
-function addScheduleOverride() {
-  const overrideType = document.getElementById("overrideType").value;
-  const overrideValue = document.getElementById("overrideValue").value.trim();
-  const overrideDropOffTime = document.getElementById("overrideDropOffTime").value;
-  const overridePickUpTime = document.getElementById("overridePickUpTime").value;
-
-  if (!overrideValue) {
-    document.getElementById("settingsMessage").innerText = 'Enter a day or date to override.';
-    return;
-  }
-
-  if (!overrideDropOffTime && !overridePickUpTime) {
-    document.getElementById("settingsMessage").innerText = 'Enter at least one override time.';
-    return;
-  }
-
-  if (overrideDropOffTime) {
-    scheduleOverrides.push({
-      type: overrideType,
-      value: overrideValue,
-      action: 'drop_off',
-      time: overrideDropOffTime,
-    });
-  }
-
-  if (overridePickUpTime) {
-    scheduleOverrides.push({
-      type: overrideType,
-      value: overrideValue,
-      action: 'pick_up',
-      time: overridePickUpTime,
-    });
-  }
-
-  renderScheduleOverrides();
-  document.getElementById("overrideValue").value = "";
-  document.getElementById("overrideDropOffTime").value = "";
-  document.getElementById("overridePickUpTime").value = "";
-  document.getElementById("settingsMessage").innerText = "Override(s) added";
-}
-
-function removeScheduleOverride(index) {
-  scheduleOverrides.splice(index, 1);
-  renderScheduleOverrides();
-  document.getElementById("settingsMessage").innerText = "Override removed";
-}
-
-function renderScheduleOverrides() {
-  const container = document.getElementById("scheduleOverridesList");
-  if (!container) {
-    return;
-  }
-
-  if (!scheduleOverrides.length) {
-    container.innerHTML = '<p class="late-payment-instructions">No special-day overrides yet.</p>';
-    return;
-  }
-
-  const dropOffOverrides = scheduleOverrides.filter((override) => override.action === 'drop_off');
-  const pickUpOverrides = scheduleOverrides.filter((override) => override.action === 'pick_up');
-
-  const renderOverrides = (overrides, heading, actionLabel) => {
-    if (!overrides.length) {
-      return '';
-    }
-
-    return `
-      <div style="margin-top:0.75rem;">
-        <strong>${escapeHtml(heading)}</strong>
-        ${overrides.map((override, index) => {
-          const globalIndex = scheduleOverrides.findIndex((entry) => entry === override && entry.action === override.action && entry.time === override.time && entry.value === override.value && entry.type === override.type);
-          return `
-            <div class="override-entry" style="margin-top:0.5rem; padding:0.65rem 0.75rem; border:1px solid #e2e8f0; border-radius:8px; background:#ffffff; display:flex; justify-content:space-between; align-items:center; gap:1rem;">
-              <div>${escapeHtml(override.type === 'date' ? 'Date' : 'Day')}: ${escapeHtml(override.value)} • ${escapeHtml(actionLabel)} • ${escapeHtml(override.time)}</div>
-              <button type="button" class="link-button" onclick="removeScheduleOverride(${globalIndex})">Remove</button>
-            </div>
-          `;
-        }).join('')}
-      </div>
-    `;
-  };
-
-  container.innerHTML = `${renderOverrides(dropOffOverrides, 'Drop-off overrides', 'Drop-off')} ${renderOverrides(pickUpOverrides, 'Pick-up overrides', 'Pick-up')}`;
 }
 
 function saveScheduleSettings() {
@@ -537,7 +454,7 @@ function saveScheduleSettings() {
       'Content-Type': 'application/json',
       Authorization: authHeader,
     },
-    body: JSON.stringify({ lateDropOffAfter, latePickUpAfter, overrides: scheduleOverrides }),
+    body: JSON.stringify({ lateDropOffAfter, latePickUpAfter }),
   })
     .then(async (response) => {
       if (!response.ok) {
@@ -556,6 +473,65 @@ function saveScheduleSettings() {
     .catch((error) => {
       console.error('Schedule settings save error:', error);
       message.innerText = error.message;
+    });
+}
+
+function formatTimeAmPm(timeString) {
+  if (!timeString || timeString.length < 5) return timeString;
+  const [hours, minutes] = timeString.split(':');
+  const hour = parseInt(hours, 10);
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  const displayHour = hour % 12 || 12;
+  return `${displayHour}:${minutes}${ampm}`;
+}
+
+function updateWednesdayTime() {
+  const newTime = document.getElementById("wednesdayTimeInput").value;
+  
+  if (!newTime) {
+    alert('Please enter a time');
+    return;
+  }
+
+  const lateDropOffAfter = document.getElementById("lateDropOffAfter").value;
+  const latePickUpAfter = document.getElementById("latePickUpAfter").value;
+
+  const overrides = [
+    {
+      type: 'day',
+      value: 'Wednesday',
+      action: 'pick_up',
+      time: newTime,
+    }
+  ];
+
+  fetch('/api/admin/schedule-settings', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: authHeader,
+    },
+    body: JSON.stringify({ lateDropOffAfter, latePickUpAfter, overrides }),
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        const error = await response.json().catch(async () => ({ error: await response.text() }));
+        if (response.status === 401 || response.status === 403) {
+          logout();
+        }
+        throw new Error(error.error || 'Unable to update Wednesday time');
+      }
+      return response.json();
+    })
+    .then(() => {
+      document.getElementById("wednesdayTimeDisplay").innerText = formatTimeAmPm(newTime);
+      alert('Wednesday pick-up time updated to ' + formatTimeAmPm(newTime));
+      loadScheduleSettings();
+      loadData();
+    })
+    .catch((error) => {
+      console.error('Wednesday time update error:', error);
+      alert('Error: ' + error.message);
     });
 }
 

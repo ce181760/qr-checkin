@@ -348,6 +348,38 @@ function normalizeAction(action) {
   return action === 'pick_up' ? 'pick_up' : 'drop_off';
 }
 
+function getStudentCheckInRequiredMessage() {
+  return 'Pick-up can only be saved after the student has checked in today.';
+}
+
+function canRecordPickup(existingRecord = {}) {
+  if (!existingRecord || typeof existingRecord !== 'object') {
+    return true;
+  }
+
+  if (existingRecord.pickUpTimestamp) {
+    return false;
+  }
+
+  return true;
+}
+
+function resolveAttendanceAction(requestedAction, existingRecord = null) {
+  const normalizedAction = normalizeAction(requestedAction);
+  if (normalizedAction !== 'drop_off' || !existingRecord || typeof existingRecord !== 'object') {
+    return normalizedAction;
+  }
+
+  const hasDropOff = Boolean(existingRecord.drop_off_timestamp || existingRecord.dropOffTimestamp || existingRecord.timestamp);
+  const hasPickUp = Boolean(existingRecord.pick_up_timestamp || existingRecord.pickUpTimestamp);
+
+  if (hasDropOff && !hasPickUp) {
+    return 'pick_up';
+  }
+
+  return normalizedAction;
+}
+
 function normalizeBoolean(value) {
   return value === true || value === 'true' || value === 'on' || value === 1 || value === '1';
 }
@@ -481,17 +513,42 @@ function findSessionIndex(records, studentName, eventDate) {
 }
 
 async function recordAttendanceAction(studentName, parentName, action, lateReason = '', latePaymentConfirmed = false, latePaymentReceipt = null, latePaymentMethod = DEFAULT_LATE_PAYMENT_METHOD, adminSignature = '') {
-  const attendanceAction = normalizeAction(action);
   const actionAt = new Date();
   const timestamp = actionAt.toISOString();
   const eventDate = formatArrivalDate(actionAt);
   const actionTime = formatArrivalTime(actionAt);
   const profile = await readAdminProfile();
-  const timingStatus = getActionTimingStatus(attendanceAction, timestamp, profile.scheduleSettings);
   const trimmedLateReason = String(lateReason || '').trim();
   const paymentConfirmed = normalizeBoolean(latePaymentConfirmed);
   const paymentMethod = normalizePaymentMethod(latePaymentMethod);
   const trimmedAdminSignature = String(adminSignature || '').trim();
+
+  let attendanceAction = normalizeAction(action);
+
+  if (dbPool) {
+    await ensureAttendanceTable();
+    const existing = await dbPool.query(`
+      SELECT id,
+        COALESCE(drop_off_timestamp, timestamp) AS drop_off_timestamp,
+        pick_up_timestamp
+      FROM attendance_records
+      WHERE LOWER(student_name) = LOWER($1)
+        AND COALESCE(event_date, arrival_date) = $2
+      ORDER BY id ASC
+      LIMIT 1
+    `, [studentName, eventDate]);
+
+    const currentRecord = existing.rows[0] || null;
+    attendanceAction = resolveAttendanceAction(attendanceAction, currentRecord);
+  } else {
+    ensureAttendanceFile();
+    const records = await readRecords();
+    const sessionIndex = findSessionIndex(records, studentName, eventDate);
+    const session = sessionIndex >= 0 ? records[sessionIndex] : null;
+    attendanceAction = resolveAttendanceAction(attendanceAction, session || null);
+  }
+
+  const timingStatus = getActionTimingStatus(attendanceAction, timestamp, profile.scheduleSettings);
 
   if (timingStatus === 'Late' && !trimmedLateReason) {
     const actionLabel = attendanceAction === 'pick_up' ? 'pick-up' : 'drop-off';
@@ -510,7 +567,6 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
   }
 
   if (dbPool) {
-    await ensureAttendanceTable();
     const existing = await dbPool.query(`
       SELECT id,
         COALESCE(drop_off_timestamp, timestamp) AS drop_off_timestamp,
@@ -552,11 +608,8 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
         `, [studentName, parentName, eventDate, actionTime, timestamp, trimmedLateReason]);
       }
     } else {
-      if (!existing.rows.length || !existing.rows[0].drop_off_timestamp) {
-        throw new Error('Pick-up can only be saved after the student has been dropped off today.');
-      }
-
-      if (existing.rows[0].pick_up_timestamp) {
+      const currentRecord = existing.rows[0] || {};
+      if (!canRecordPickup(currentRecord)) {
         throw new Error('This student has already been picked up today.');
       }
 
@@ -627,11 +680,7 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
       records.push(nextSession);
     }
   } else {
-    if (!session?.dropOffTimestamp) {
-      throw new Error('Pick-up can only be saved after the student has been dropped off today.');
-    }
-
-    if (session.pickUpTimestamp) {
+    if (!canRecordPickup(session || {})) {
       throw new Error('This student has already been picked up today.');
     }
 
@@ -1984,19 +2033,30 @@ app.delete('/api/records', basicAuth, async (req, res) => {
   res.json({ deleted: true });
 });
 
-app.listen(PORT, async () => {
-  const profile = await readAdminProfile();
-  console.log(`Event check-in app running at http://localhost:${PORT}`);
-  console.log(`Admin page: http://localhost:${PORT}/admin`);
-  console.log(`Admin username: ${profile.username}`);
-  console.log(`Admin email: ${profile.email}`);
-  console.log(`Admin storage: ${dbPool ? 'database' : adminFile}`);
-  console.log(`Admin env override: USER=${Boolean(process.env.ADMIN_USER)}, EMAIL=${Boolean(process.env.ADMIN_EMAIL)}, PASS=${Boolean(process.env.ADMIN_PASS)}`);
+if (require.main === module) {
+  app.listen(PORT, async () => {
+    const profile = await readAdminProfile();
+    console.log(`Event check-in app running at http://localhost:${PORT}`);
+    console.log(`Admin page: http://localhost:${PORT}/admin`);
+    console.log(`Admin username: ${profile.username}`);
+    console.log(`Admin email: ${profile.email}`);
+    console.log(`Admin storage: ${dbPool ? 'database' : adminFile}`);
+    console.log(`Admin env override: USER=${Boolean(process.env.ADMIN_USER)}, EMAIL=${Boolean(process.env.ADMIN_EMAIL)}, PASS=${Boolean(process.env.ADMIN_PASS)}`);
 
-  await checkAndSendPasswordReminder();
-  await checkAndSendDailyReport();
-  await checkAndSendMonthlyReport();
-  setInterval(checkAndSendPasswordReminder, 24 * 60 * 60 * 1000);
-  setInterval(checkAndSendDailyReport, 5 * 60 * 1000);
-  setInterval(checkAndSendMonthlyReport, 24 * 60 * 60 * 1000);
-});
+    await checkAndSendPasswordReminder();
+    await checkAndSendDailyReport();
+    await checkAndSendMonthlyReport();
+    setInterval(checkAndSendPasswordReminder, 24 * 60 * 60 * 1000);
+    setInterval(checkAndSendDailyReport, 5 * 60 * 1000);
+    setInterval(checkAndSendMonthlyReport, 24 * 60 * 60 * 1000);
+  });
+}
+
+module.exports = {
+  app,
+  getStudentCheckInRequiredMessage,
+  canRecordPickup,
+  resolveAttendanceAction,
+  normalizeAction,
+  recordAttendanceAction,
+};

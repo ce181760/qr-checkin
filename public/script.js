@@ -2,7 +2,10 @@ let lateReasonRequired = false;
 let latePaymentRequired = false;
 
 window.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('input[name="action"]').forEach((input) => {
+  const studentNameInput = document.getElementById('studentName');
+  const actionInputs = document.querySelectorAll('input[name="action"]');
+
+  actionInputs.forEach((input) => {
     input.addEventListener('change', resetLateReasonPrompt);
   });
 
@@ -10,7 +13,55 @@ window.addEventListener('DOMContentLoaded', () => {
   if (paymentMethodSelect) {
     paymentMethodSelect.addEventListener('change', toggleLatePaymentSections);
   }
+
+  if (studentNameInput) {
+    studentNameInput.addEventListener('change', updateDefaultPickupAction);
+    studentNameInput.addEventListener('blur', updateDefaultPickupAction);
+  }
+
+  updateDefaultPickupAction();
 });
+
+async function updateDefaultPickupAction() {
+  const studentNameInput = document.getElementById('studentName');
+  const pickupInput = document.querySelector('input[name="action"][value="pick_up"]');
+  const dropOffInput = document.querySelector('input[name="action"][value="drop_off"]');
+
+  if (!studentNameInput || !pickupInput || !dropOffInput) {
+    return;
+  }
+
+  const studentName = studentNameInput.value.trim();
+  if (!studentName) {
+    return;
+  }
+
+  try {
+    const response = await fetch('/attendance');
+    if (!response.ok) {
+      return;
+    }
+
+    const records = await response.json();
+    const today = new Date();
+    const todayKey = new Date(today.getTime() - (today.getTimezoneOffset() * 60000)).toISOString().slice(0, 10);
+    const alreadyCheckedIn = records.some((record) => {
+      const normalizedStudent = String(record.studentName || '').trim().toLowerCase();
+      const normalizedInput = studentName.toLowerCase();
+      const recordDate = String(record.eventDate || record.arrivalDate || '').slice(0, 10);
+      const hasPickup = Boolean(record.pickUpTimestamp);
+      return normalizedStudent === normalizedInput && recordDate === todayKey && !hasPickup;
+    });
+
+    if (alreadyCheckedIn) {
+      pickupInput.checked = true;
+      dropOffInput.checked = false;
+      resetLateReasonPrompt();
+    }
+  } catch (error) {
+    console.warn('Unable to detect existing student attendance.', error);
+  }
+}
 
 async function checkIn() {
   const studentName = document.getElementById("studentName").value.trim();
