@@ -41,32 +41,6 @@
         <button id="print" type="button" onclick="printPage()">Print / Save PDF</button>
       </div>
 
-      <form id="scheduleSettings" class="settings-panel" onsubmit="saveScheduleSettings(); return false;">
-        <h2>Late Cutoff Times</h2>
-        <div class="settings-field">
-          <label for="lateDropOffAfter">Late drop-off at or after</label>
-          <input id="lateDropOffAfter" type="time" required />
-        </div>
-        <div class="settings-field">
-          <label for="latePickUpAfter">Late pick-up at or after</label>
-          <input id="latePickUpAfter" type="time" required />
-        </div>
-
-        <div class="settings-actions">
-          <button type="submit">Save Times</button>
-          <span id="settingsMessage"></span>
-        </div>
-      </form>
-
-      <div id="wednesdayNotice" style="margin-top: 1.5rem; padding: 1rem; background-color: #f0f9ff; border-left: 4px solid #0ea5e9; border-radius: 4px;">
-        <p style="margin: 0; color: #0c4a6e; font-weight: 500;">📅 Wednesday Schedule</p>
-        <p style="margin: 0.5rem 0 0; color: #0c4a6e; font-size: 0.95rem;">Late pick-up after <strong id="wednesdayTimeDisplay">1:50 PM</strong></p>
-        <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; align-items: center;">
-          <input id="wednesdayTimeInput" type="time" value="13:50" style="padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.95rem;" />
-          <button type="button" onclick="updateWednesdayTime()" style="padding: 0.5rem 1rem; background-color: #0ea5e9; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500;">Update</button>
-        </div>
-      </div>
-
       <div id="recordsSection">
         <table>
           <thead>
