@@ -163,24 +163,30 @@ function loadData() {
 
       let html = "";
       records.forEach((record, index) => {
+        const lateReasons = [
+          record.dropOffLateReason ? `Drop-off: ${record.dropOffLateReason}` : '',
+          record.pickUpLateReason ? `Pick-up: ${record.pickUpLateReason}` : '',
+        ].filter(Boolean).join('<br>') || '-';
+
         html += `
           <tr>
             <td>${escapeHtml(record.studentName)} / ${escapeHtml(record.parentName)}</td>
             <td>${escapeHtml(new Date(record.timestamp).toLocaleString())}</td>
+            <td>${escapeHtml(lateReasons).replace(/&lt;br&gt;/g, '<br>')}</td>
             <td><button type="button" onclick="deleteRecord(${index})">Delete</button></td>
           </tr>
         `;
       });
 
       if (!html) {
-        html = "<tr><td colspan=\"3\">No records yet.</td></tr>";
+        html = "<tr><td colspan=\"4\">No records yet.</td></tr>";
       }
 
       document.getElementById("data").innerHTML = html;
     })
     .catch(error => {
       console.error('Attendance load error:', error);
-      document.getElementById("data").innerHTML = `<tr><td colspan=\"3\">Unable to load attendance: ${escapeHtml(error.message)}</td></tr>`;
+      document.getElementById("data").innerHTML = `<tr><td colspan=\"4\">Unable to load attendance: ${escapeHtml(error.message)}</td></tr>`;
     });
 }
 
