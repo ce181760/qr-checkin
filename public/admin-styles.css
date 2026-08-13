@@ -51,4 +51,9 @@
   table {
     width: 100%;
   }
+
+  .actions-column,
+  #data td:last-child {
+    display: none;
+  }
 }
