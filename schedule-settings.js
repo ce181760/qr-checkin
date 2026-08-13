@@ -1,9 +1,5 @@
 const DEFAULT_LATE_DROP_OFF_AFTER = '08:36';
 const DEFAULT_LATE_PICK_UP_AFTER = '13:35';
-const ARRIVAL_TIME_ZONE = 'America/New_York';
-const DEFAULT_SCHEDULE_OVERRIDES = [
-  { type: 'day', value: 'Wednesday', action: 'pick_up', time: '13:50' },
-];
 
 function isValidTimeValue(value) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
@@ -17,7 +13,7 @@ function normalizeScheduleSettings(settings = {}) {
     ? (settings.latePickUpAfter || settings.late_pick_up_after)
     : DEFAULT_LATE_PICK_UP_AFTER;
 
-  const overrides = Array.isArray(settings.overrides) ? settings.overrides : DEFAULT_SCHEDULE_OVERRIDES;
+  const overrides = Array.isArray(settings.overrides) ? settings.overrides : [];
   const normalizedOverrides = overrides
     .filter((override) => override && typeof override === 'object')
     .map((override) => ({
@@ -50,18 +46,8 @@ function getEffectiveScheduleTime(action, timestamp, settings = {}) {
     return defaultTime;
   }
 
-  const dateParts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: ARRIVAL_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-  const dateValues = Object.fromEntries(dateParts.map((part) => [part.type, part.value]));
-  const dateKey = `${dateValues.year}-${dateValues.month}-${dateValues.day}`;
-  const dayName = new Intl.DateTimeFormat('en-US', {
-    timeZone: ARRIVAL_TIME_ZONE,
-    weekday: 'long',
-  }).format(date);
+  const dateKey = date.toISOString().slice(0, 10);
+  const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
 
   const override = normalizedSettings.overrides.find((entry) => {
     if (entry.action !== actionKey) {

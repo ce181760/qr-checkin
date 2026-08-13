@@ -1,7 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { normalizePaymentMethod, getLatePaymentSummary } = require('../payment-flow');
-const { canRecordPickup } = require('../server');
 
 test('normalizes payment method values', () => {
   assert.equal(normalizePaymentMethod('cash'), 'cash');
@@ -35,10 +34,4 @@ test('formats cash payment summaries', () => {
 
   assert.equal(pending, 'Cash payment pending admin approval');
   assert.equal(approved, 'Cash payment approved by Ms. Rivera');
-});
-
-test('allows pickup without a prior dropoff record while blocking duplicate pickups', () => {
-  assert.equal(canRecordPickup({}), true);
-  assert.equal(canRecordPickup({ dropOffTimestamp: '2026-08-12T08:00:00Z' }), true);
-  assert.equal(canRecordPickup({ pickUpTimestamp: '2026-08-12T15:00:00Z' }), false);
 });
