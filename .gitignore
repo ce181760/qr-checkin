@@ -16,9 +16,8 @@ yarn-error.log*
 *.pem
 *.key
 
-# Local data and exports (may contain PII)
-data/admin.json
-data/*.csv
+# Local data and exports (contains PII, secrets, attendance records)
+data/
 
 # Optional IDE files
 .idea/

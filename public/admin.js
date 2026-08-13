@@ -17,7 +17,11 @@ function initAdmin() {
   checkAdminSession()
     .then((profile) => {
       authenticated = true;
-      showDashboard();
+      if (profile.passwordChangeRequired) {
+        window.location.href = '/admin/account?force=true';
+      } else {
+        showDashboard();
+      }
     })
     .catch(() => {
       localStorage.removeItem('eventCheckinAdminAuthHeader');
@@ -32,7 +36,6 @@ function showDashboard() {
   document.getElementById("adminToolbar").style.display = "flex";
   document.getElementById("recordsSection").style.display = "block";
   loadProfile();
-  loadScheduleSettings();
   loadData();
   
   // Start auto-refresh every 3 seconds
@@ -58,11 +61,11 @@ function hideDashboard() {
 }
 
 function login() {
-  const identifier = document.getElementById("username").value.trim();
+  const username = document.getElementById("username").value.trim();
   const password = document.getElementById("password").value;
 
-  if (!identifier || !password) {
-    document.getElementById("error").innerText = "Username, email, or phone and password are required.";
+  if (!username || !password) {
+    document.getElementById("error").innerText = "Username and password are required.";
     return;
   }
 
@@ -71,7 +74,7 @@ function login() {
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ identifier, password }),
+    body: JSON.stringify({ username, password }),
   })
     .then(async (response) => {
       if (!response.ok) {
@@ -82,10 +85,14 @@ function login() {
     })
     .then((profile) => {
       authenticated = true;
-      authHeader = `Basic ${btoa(`${identifier}:${password}`)}`;
+      authHeader = `Basic ${btoa(`${username}:${password}`)}`;
       localStorage.setItem('eventCheckinAdminAuthHeader', authHeader);
       currentProfile = profile;
-      showDashboard();
+      if (profile.passwordChangeRequired) {
+        window.location.href = '/admin/account?force=true';
+      } else {
+        showDashboard();
+      }
     })
     .catch((error) => {
       document.getElementById("error").innerText = error.message;
@@ -145,12 +152,14 @@ function loadProfile() {
     .then((profile) => {
       currentProfile = profile;
       document.getElementById("userName").innerText = `Logged in as ${profile.username}`;
+      if (profile.passwordChangeRequired) {
+        window.location.href = '/admin/account?force=true';
+      }
     })
     .catch((error) => {
       console.error('Profile load error:', error);
     });
 }
-
 
 function loadData() {
   document.getElementById("data").innerHTML = "";
@@ -167,36 +176,29 @@ function loadData() {
       return response.json();
     })
     .then(records => {
-      records.sort((a, b) => new Date(getSortTimestamp(b)) - new Date(getSortTimestamp(a)));
+      records.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       currentRecords = records;
 
       let html = "";
       records.forEach((record, index) => {
         html += `
           <tr>
-            <td>${escapeHtml(record.studentName)}</td>
-            <td><span class="status ${escapeHtml(getStatusClass(record.status))}">${escapeHtml(record.status || getRecordStatus(record))}</span></td>
-            <td>${formatTimingFlags(record.timingFlags)}</td>
-            <td>${escapeHtml(record.eventDate || record.arrivalDate || formatDate(record.dropOffTimestamp || record.timestamp))}</td>
-            <td>${escapeHtml(formatPersonTime(record.dropOffParentName || record.parentName, record.dropOffTime || record.arrivalTime, record.dropOffTimestamp || record.timestamp))}</td>
-            <td>${escapeHtml(formatPersonTime(record.pickUpParentName, record.pickUpTime, record.pickUpTimestamp))}</td>
-            <td>${renderLatePickUpPayment(record, index)}</td>
+            <td>${escapeHtml(record.studentName)} / ${escapeHtml(record.parentName)}</td>
+            <td>${escapeHtml(new Date(record.timestamp).toLocaleString())}</td>
             <td><button type="button" onclick="deleteRecord(${index})">Delete</button></td>
           </tr>
         `;
       });
 
       if (!html) {
-        html = "<tr><td colspan=\"8\">No records yet.</td></tr>";
+        html = "<tr><td colspan=\"3\">No records yet.</td></tr>";
       }
 
       document.getElementById("data").innerHTML = html;
-      renderLateReasonsReport(records);
     })
     .catch(error => {
       console.error('Attendance load error:', error);
-      document.getElementById("data").innerHTML = `<tr><td colspan=\"8\">Unable to load attendance: ${escapeHtml(error.message)}</td></tr>`;
-      document.getElementById("lateReasonsReport").innerHTML = "";
+      document.getElementById("data").innerHTML = `<tr><td colspan=\"3\">Unable to load attendance: ${escapeHtml(error.message)}</td></tr>`;
     });
 }
 
@@ -206,7 +208,7 @@ function deleteRecord(index) {
     return alert('Unable to delete record. Please log in again.');
   }
 
-  if (!confirm(`Delete attendance record for ${record.studentName} on ${record.eventDate || record.arrivalDate}?`)) {
+  if (!confirm(`Delete attendance record for ${record.studentName} / ${record.parentName}?`)) {
     return;
   }
 
@@ -237,36 +239,28 @@ function deleteRecord(index) {
     });
 }
 
-// SEARCH/FILTER
 function filterTable() {
   const input = document.getElementById("search").value.toLowerCase();
   const rows = document.querySelectorAll("#data tr");
 
   rows.forEach(row => {
-    const text = Array.from(row.cells).map(cell => cell.innerText.toLowerCase()).join(" ");
-    row.style.display = text.includes(input) ? "" : "none";
+    const name = row.cells[0] ? row.cells[0].innerText.toLowerCase() : "";
+    row.style.display = name.includes(input) ? "" : "none";
   });
 }
 
-// EXPORT TO CSV
 function exportCSV() {
   const rows = document.querySelectorAll("#data tr");
-  let csv = "Student,Status,Late Labels,Event Date,Drop-off,Pick-up,Payment\n";
+  let csv = "Name,Check-in Time\n";
 
   rows.forEach(row => {
-    if (row.style.display !== "none" && row.cells.length >= 7) {
-      const student = row.cells[0].innerText.replace(/"/g, '""');
-      const status = row.cells[1].innerText.replace(/"/g, '""');
-      const lateLabels = row.cells[2].innerText.replace(/"/g, '""');
-      const eventDate = row.cells[3].innerText.replace(/"/g, '""');
-      const dropOff = row.cells[4].innerText.replace(/"/g, '""');
-      const pickUp = row.cells[5].innerText.replace(/"/g, '""');
-      const payment = row.cells[6].innerText.replace(/"/g, '""');
-      csv += `"${student}","${status}","${lateLabels}","${eventDate}","${dropOff}","${pickUp}","${payment}"\n`;
+    if (row.style.display !== "none") {
+      const name = row.cells[0].innerText.replace(/"/g, '""');
+      const time = row.cells[1].innerText.replace(/"/g, '""');
+      csv += `"${name}","${time}"\n`;
     }
   });
 
-  // Download CSV
   const blob = new Blob([csv], { type: "text/csv" });
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -276,7 +270,6 @@ function exportCSV() {
   window.URL.revokeObjectURL(url);
 }
 
-// PRINT
 function printPage() {
   window.print();
 }
