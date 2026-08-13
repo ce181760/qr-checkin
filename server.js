@@ -2,29 +2,53 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const nodemailer = require('nodemailer');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const csvFile = path.join(__dirname, 'data', 'attendance.csv');
-const usersFile = path.join(__dirname, 'data', 'users.csv');
-const adminFile = path.join(__dirname, 'data', 'admin.json');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const csvFile = path.join(DATA_DIR, 'attendance.csv');
+const usersFile = path.join(DATA_DIR, 'users.csv');
+const adminFile = path.join(DATA_DIR, 'admin.json');
+const receiptDir = path.join(DATA_DIR, 'late-pickup-receipts');
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'admin123';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@example.com';
+const DATABASE_URL = process.env.DATABASE_URL || '';
 const SMTP_HOST = process.env.SMTP_HOST || '';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT, 10) || 587;
 const SMTP_USER = process.env.SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || '';
 const SMTP_FROM = process.env.SMTP_FROM || `no-reply@${process.env.SMTP_HOST || 'localhost'}`;
 const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
+const DEFAULT_LATE_PAYMENT_METHOD = 'venmo';
+const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
+const RECEIPT_MIME_EXTENSIONS = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
+const dbPool = DATABASE_URL ? new Pool({
+  connectionString: DATABASE_URL,
+  ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
+}) : null;
+let attendanceTableReady = false;
 
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 function ensureDir() {
-  if (!fs.existsSync(path.dirname(usersFile))) {
-    fs.mkdirSync(path.dirname(usersFile), { recursive: true });
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+}
+
+function ensureReceiptDir() {
+  ensureDir();
+  if (!fs.existsSync(receiptDir)) {
+    fs.mkdirSync(receiptDir, { recursive: true });
   }
 }
 
@@ -61,12 +85,26 @@ function addUser(firstName, lastName, phone, email) {
   fs.appendFileSync(usersFile, line, 'utf8');
 }
 
+function recordCheckin(studentName, parentName) {
+  ensureAttendanceFile();
+  const timestamp = new Date().toISOString();
+  const line = `"${studentName.replace(/"/g, '""')}","${parentName.replace(/"/g, '""')}","${timestamp}"\n`;
+  fs.appendFileSync(csvFile, line, 'utf8');
+}
+
 async function ensureAttendanceTable() {
   if (!dbPool || attendanceTableReady) {
     return;
   }
 
   await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS attendance_records (
+      id BIGSERIAL PRIMARY KEY,
+      student_name TEXT NOT NULL,
+      parent_name TEXT NOT NULL,
+      arrival_date TEXT NOT NULL,
+      arrival_time TEXT NOT NULL,
+      timestamp TIMESTAMPTZ NOT NULL
     )
   `);
   await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS event_date TEXT');
@@ -749,11 +787,7 @@ if (require.main === module) {
     console.log(`Admin env override: USER=${Boolean(process.env.ADMIN_USER)}, EMAIL=${Boolean(process.env.ADMIN_EMAIL)}, PASS=${Boolean(process.env.ADMIN_PASS)}`);
 
     await checkAndSendPasswordReminder();
-    await checkAndSendDailyReport();
-    await checkAndSendMonthlyReport();
     setInterval(checkAndSendPasswordReminder, 24 * 60 * 60 * 1000);
-    setInterval(checkAndSendDailyReport, 5 * 60 * 1000);
-    setInterval(checkAndSendMonthlyReport, 24 * 60 * 60 * 1000);
   });
 }
 
