@@ -104,6 +104,15 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function formatAction(parentName, time, timestamp) {
+  const displayTime = time || (timestamp ? new Date(timestamp).toLocaleString() : '');
+  if (!parentName && !displayTime) {
+    return '-';
+  }
+
+  return `${escapeHtml(parentName || '-')}<br><small>${escapeHtml(displayTime || '-')}</small>`;
+}
+
 function checkAdminSession() {
   return fetch('/api/admin/profile', { headers: { Authorization: authHeader } })
     .then(async (response) => {
@@ -164,29 +173,30 @@ function loadData() {
       let html = "";
       records.forEach((record, index) => {
         const lateReasons = [
-          record.dropOffLateReason ? `Drop-off: ${record.dropOffLateReason}` : '',
-          record.pickUpLateReason ? `Pick-up: ${record.pickUpLateReason}` : '',
+          record.dropOffLateReason ? `Drop-off: ${escapeHtml(record.dropOffLateReason)}` : '',
+          record.pickUpLateReason ? `Pick-up: ${escapeHtml(record.pickUpLateReason)}` : '',
         ].filter(Boolean).join('<br>') || '-';
 
         html += `
           <tr>
-            <td>${escapeHtml(record.studentName)} / ${escapeHtml(record.parentName)}</td>
-            <td>${escapeHtml(new Date(record.timestamp).toLocaleString())}</td>
-            <td>${escapeHtml(lateReasons).replace(/&lt;br&gt;/g, '<br>')}</td>
+            <td>${escapeHtml(record.studentName)}</td>
+            <td>${formatAction(record.dropOffParentName || record.parentName, record.dropOffTime, record.dropOffTimestamp || record.timestamp)}</td>
+            <td>${formatAction(record.pickUpParentName, record.pickUpTime, record.pickUpTimestamp)}</td>
+            <td>${lateReasons}</td>
             <td><button type="button" onclick="deleteRecord(${index})">Delete</button></td>
           </tr>
         `;
       });
 
       if (!html) {
-        html = "<tr><td colspan=\"4\">No records yet.</td></tr>";
+        html = "<tr><td colspan=\"5\">No records yet.</td></tr>";
       }
 
       document.getElementById("data").innerHTML = html;
     })
     .catch(error => {
       console.error('Attendance load error:', error);
-      document.getElementById("data").innerHTML = `<tr><td colspan=\"4\">Unable to load attendance: ${escapeHtml(error.message)}</td></tr>`;
+      document.getElementById("data").innerHTML = `<tr><td colspan=\"5\">Unable to load attendance: ${escapeHtml(error.message)}</td></tr>`;
     });
 }
 
