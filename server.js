@@ -543,11 +543,7 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
         `, [studentName, parentName, eventDate, actionTime, timestamp, trimmedLateReason]);
       }
     } else {
-      if (!existing.rows.length || !existing.rows[0].drop_off_timestamp) {
-        throw new Error('This student must be dropped off before they can be picked up.');
-      }
-
-      if (existing.rows[0].pick_up_timestamp) {
+      if (existing.rows.length && existing.rows[0].pick_up_timestamp) {
         throw new Error('This student has already been picked up today.');
       }
 
@@ -555,18 +551,30 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
         ? saveLatePickUpReceipt(studentName, timestamp, latePaymentReceipt)
         : '';
 
-      await dbPool.query(`
-        UPDATE attendance_records
-        SET event_date = COALESCE(event_date, arrival_date),
-            pick_up_parent_name = $1,
-            pick_up_time = $2,
-            pick_up_timestamp = $3,
-            pick_up_late_reason = $4,
-            pick_up_late_payment_confirmed = $5,
-            pick_up_late_payment_receipt = $6,
-            pick_up_late_payment_method = $7
-        WHERE id = $8
-      `, [parentName, actionTime, timestamp, trimmedLateReason, timingStatus === 'Late' ? paymentConfirmed : false, receiptFileName, paymentMethod, existing.rows[0].id]);
+      if (existing.rows.length) {
+        await dbPool.query(`
+          UPDATE attendance_records
+          SET event_date = COALESCE(event_date, arrival_date),
+              pick_up_parent_name = $1,
+              pick_up_time = $2,
+              pick_up_timestamp = $3,
+              pick_up_late_reason = $4,
+              pick_up_late_payment_confirmed = $5,
+              pick_up_late_payment_receipt = $6,
+              pick_up_late_payment_method = $7
+          WHERE id = $8
+        `, [parentName, actionTime, timestamp, trimmedLateReason, timingStatus === 'Late' ? paymentConfirmed : false, receiptFileName, paymentMethod, existing.rows[0].id]);
+      } else {
+        await dbPool.query(`
+          INSERT INTO attendance_records (
+            student_name, parent_name, arrival_date, arrival_time, timestamp,
+            event_date, pick_up_parent_name, pick_up_time, pick_up_timestamp,
+            pick_up_late_reason, pick_up_late_payment_confirmed,
+            pick_up_late_payment_receipt, pick_up_late_payment_method
+          )
+          VALUES ($1, $2, $3, $4, $5, $3, $2, $4, $5, $6, $7, $8, $9)
+        `, [studentName, parentName, eventDate, actionTime, timestamp, trimmedLateReason, timingStatus === 'Late' ? paymentConfirmed : false, receiptFileName, paymentMethod]);
+      }
     }
 
     if (timingStatus === 'Late') {
@@ -617,11 +625,7 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
       records.push(nextSession);
     }
   } else {
-    if (!session?.dropOffTimestamp) {
-      throw new Error('This student must be dropped off before they can be picked up.');
-    }
-
-    if (session.pickUpTimestamp) {
+    if (session?.pickUpTimestamp) {
       throw new Error('This student has already been picked up today.');
     }
 
@@ -629,8 +633,8 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
       ? saveLatePickUpReceipt(studentName, timestamp, latePaymentReceipt)
       : '';
 
-    records[sessionIndex] = normalizeRecord({
-      ...session,
+    const nextSession = normalizeRecord({
+      ...(session || { studentName, eventDate }),
       pickUpParentName: parentName,
       pickUpTime: actionTime,
       pickUpTimestamp: timestamp,
@@ -639,6 +643,12 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
       pickUpLatePaymentReceipt: receiptFileName,
       pickUpLatePaymentMethod: timingStatus === 'Late' ? paymentMethod : DEFAULT_LATE_PAYMENT_METHOD,
     });
+
+    if (sessionIndex >= 0) {
+      records[sessionIndex] = nextSession;
+    } else {
+      records.push(nextSession);
+    }
   }
 
   writeRecords(records);
@@ -1755,8 +1765,8 @@ app.get('/api/late-pickup-receipts/:fileName', basicAuth, (req, res) => {
 });
 
 app.delete('/api/records', basicAuth, async (req, res) => {
-  const { studentName, eventDate, dropOffTimestamp, timestamp } = req.body;
-  const recordTimestamp = dropOffTimestamp || timestamp;
+  const { studentName, eventDate, dropOffTimestamp, pickUpTimestamp, timestamp } = req.body;
+  const recordTimestamp = dropOffTimestamp || timestamp || pickUpTimestamp;
   if (!studentName || !eventDate || !recordTimestamp) {
     return res.status(400).send('Student name, event date, and drop-off timestamp are required');
   }
@@ -1769,7 +1779,7 @@ app.delete('/api/records', basicAuth, async (req, res) => {
         SELECT id FROM attendance_records
         WHERE student_name = $1
           AND COALESCE(event_date, arrival_date) = $2
-          AND COALESCE(drop_off_timestamp, timestamp) = $3
+          AND COALESCE(drop_off_timestamp, timestamp, pick_up_timestamp) = $3
         ORDER BY id ASC
         LIMIT 1
       )
@@ -1788,12 +1798,12 @@ app.delete('/api/records', basicAuth, async (req, res) => {
   const deletedRecord = records.find((record) => (
     record.studentName === studentName
     && record.eventDate === eventDate
-    && record.dropOffTimestamp === recordTimestamp
+    && (record.dropOffTimestamp || record.timestamp || record.pickUpTimestamp) === recordTimestamp
   ));
   const remaining = records.filter((record) => !(
     record.studentName === studentName
     && record.eventDate === eventDate
-    && record.dropOffTimestamp === recordTimestamp
+    && (record.dropOffTimestamp || record.timestamp || record.pickUpTimestamp) === recordTimestamp
   ));
   if (remaining.length === records.length) {
     return res.status(404).send('Record not found');
