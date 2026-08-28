@@ -105,12 +105,17 @@ function escapeHtml(value) {
 }
 
 function formatAction(parentName, time, timestamp) {
-  const displayTime = time || (timestamp ? new Date(timestamp).toLocaleString() : '');
-  if (!parentName && !displayTime) {
+  const actionDate = timestamp ? new Date(timestamp) : null;
+  const hasValidActionDate = actionDate && !Number.isNaN(actionDate.getTime());
+  const displayTime = time || (hasValidActionDate ? actionDate.toLocaleTimeString() : '');
+  const displayDateTime = hasValidActionDate
+    ? `${actionDate.toLocaleDateString()} at ${displayTime || '-'}`
+    : displayTime;
+  if (!parentName && !displayDateTime) {
     return '-';
   }
 
-  return `${escapeHtml(parentName || '-')}<br><small>${escapeHtml(displayTime || '-')}</small>`;
+  return `${escapeHtml(parentName || '-')}<br><small>${escapeHtml(displayDateTime || '-')}</small>`;
 }
 
 function checkAdminSession() {
@@ -244,21 +249,27 @@ function filterTable() {
   const rows = document.querySelectorAll("#data tr");
 
   rows.forEach(row => {
-    const name = row.cells[0] ? row.cells[0].innerText.toLowerCase() : "";
-    row.style.display = name.includes(input) ? "" : "none";
+    const studentName = row.cells[0] ? row.cells[0].innerText.toLowerCase() : "";
+    const dropOffParentName = row.cells[1] ? row.cells[1].innerText.toLowerCase() : "";
+    const pickUpParentName = row.cells[2] ? row.cells[2].innerText.toLowerCase() : "";
+    const matchesSearch = studentName.includes(input)
+      || dropOffParentName.includes(input)
+      || pickUpParentName.includes(input);
+    row.style.display = matchesSearch ? "" : "none";
   });
 }
 
 // EXPORT TO CSV
 function exportCSV() {
   const rows = document.querySelectorAll("#data tr");
-  let csv = "Name,Check-in Time\n";
+  let csv = "Student,Drop-off,Pick-up,Late Reason\n";
 
   rows.forEach(row => {
     if (row.style.display !== "none") {
-      const name = row.cells[0].innerText.replace(/"/g, '""');
-      const time = row.cells[1].innerText.replace(/"/g, '""');
-      csv += `"${name}","${time}"\n`;
+      const values = [0, 1, 2, 3].map((index) => (
+        row.cells[index] ? row.cells[index].innerText.replace(/"/g, '""') : ''
+      ));
+      csv += values.map((value) => `"${value}"`).join(',') + "\n";
     }
   });
 
