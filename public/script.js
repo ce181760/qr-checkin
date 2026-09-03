@@ -83,11 +83,17 @@ async function checkIn() {
     url.searchParams.set('studentName', studentName);
     url.searchParams.set('parentName', parentName);
     url.searchParams.set('action', checkin.action || action);
+    if (checkin.eventDate) {
+      url.searchParams.set('eventDate', checkin.eventDate);
+    }
     if (checkin.actionTime) {
       url.searchParams.set('actionTime', checkin.actionTime);
     }
     if (checkin.timingStatus) {
       url.searchParams.set('timingStatus', checkin.timingStatus);
+    }
+    if (lateReason) {
+      url.searchParams.set('lateReason', lateReason);
     }
     window.location.href = url.toString();
   })
