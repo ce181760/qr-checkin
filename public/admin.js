@@ -105,17 +105,23 @@ function escapeHtml(value) {
 }
 
 function formatAction(parentName, time, timestamp) {
-  const actionDate = timestamp ? new Date(timestamp) : null;
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(String(parentName || '').trim());
+  const isIsoTimestamp = /^\d{4}-\d{2}-\d{2}T/.test(String(time || '').trim());
+  const actionTimestamp = timestamp || (isIsoTimestamp ? time : '');
+  const actionDate = actionTimestamp ? new Date(actionTimestamp) : null;
   const hasValidActionDate = actionDate && !Number.isNaN(actionDate.getTime());
-  const displayTime = time || (hasValidActionDate ? actionDate.toLocaleTimeString() : '');
+  const displayTime = isIsoTimestamp
+    ? (hasValidActionDate ? actionDate.toLocaleTimeString() : '')
+    : time || (hasValidActionDate ? actionDate.toLocaleTimeString() : '');
   const displayDateTime = hasValidActionDate
     ? `${actionDate.toLocaleDateString()} at ${displayTime || '-'}`
     : displayTime;
-  if (!parentName && !displayDateTime) {
+  const displayParentName = isDateOnly ? '' : parentName;
+  if (!displayParentName && !displayDateTime) {
     return '-';
   }
 
-  return `${escapeHtml(parentName || '-')}<br><small>${escapeHtml(displayDateTime || '-')}</small>`;
+  return `${escapeHtml(displayParentName || '-')}<br><small>${escapeHtml(displayDateTime || '-')}</small>`;
 }
 
 function checkAdminSession() {
