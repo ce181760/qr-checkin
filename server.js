@@ -115,6 +115,19 @@ function parseCsvLine(line) {
   return values;
 }
 
+function parseAttendanceCsv(csv) {
+  const [headerLine, ...recordLines] = csv.split(/\r?\n/).filter(Boolean);
+  const headers = parseCsvLine(headerLine).map((header) => header.trim());
+
+  return recordLines.map((line) => {
+    const values = parseCsvLine(line);
+    return {
+      row: Object.fromEntries(headers.map((header, index) => [header, values[index] || ''])),
+      values,
+    };
+  });
+}
+
 function formatArrivalDate(date) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: ARRIVAL_TIME_ZONE,
@@ -127,12 +140,13 @@ function formatArrivalDate(date) {
 }
 
 function formatArrivalTime(date) {
-  return new Intl.DateTimeFormat('en-US', {
+  const formatted = new Intl.DateTimeFormat('en-US', {
     timeZone: ARRIVAL_TIME_ZONE,
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
   }).format(date);
+  return formatted.replace(/\s([AP])M$/, (_, period) => `${period.toLowerCase()}m`);
 }
 
 function isValidTimeValue(value) {
@@ -1074,13 +1088,22 @@ async function trySendLateAttendanceEmail(details) {
   }
 }
 
+function formatReportActionTime(storedTime, timestamp) {
+  const date = timestamp ? new Date(timestamp) : null;
+  if (date && !Number.isNaN(date.getTime())) {
+    return formatArrivalTime(date);
+  }
+  return storedTime || 'Unknown time';
+}
+
 function formatDailyReportRecord(record) {
   const lateLabels = (record.timingFlags || []).join(', ') || 'None';
-  const dropOff = record.dropOffTimestamp
-    ? `${record.dropOffParentName || 'Unknown parent'} at ${record.dropOffTime || formatArrivalTime(new Date(record.dropOffTimestamp))}`
+  const dropOffTimestamp = record.dropOffTimestamp || record.timestamp;
+  const dropOff = dropOffTimestamp
+    ? `${record.dropOffParentName || 'Unknown parent'} at ${formatReportActionTime(record.dropOffTime, dropOffTimestamp)}`
     : 'Not recorded';
   const pickUp = record.pickUpTimestamp
-    ? `${record.pickUpParentName || 'Unknown parent'} at ${record.pickUpTime || formatArrivalTime(new Date(record.pickUpTimestamp))}`
+    ? `${record.pickUpParentName || 'Unknown parent'} at ${formatReportActionTime(record.pickUpTime, record.pickUpTimestamp)}`
     : 'Not recorded';
   const reasons = [
     record.dropOffLateReason ? `Drop-off reason: ${record.dropOffLateReason}` : '',
@@ -1485,8 +1508,7 @@ async function readRecords() {
   ensureAttendanceFile();
   const csv = fs.readFileSync(csvFile, 'utf8');
 
-  return csv.split('\n').filter(Boolean).slice(1).map((line) => {
-    const values = parseCsvLine(line);
+  return parseAttendanceCsv(csv).map(({ row, values }) => {
     let record = null;
     if (values.length === 3) {
       const timestamp = values[2];
@@ -1498,48 +1520,30 @@ async function readRecords() {
         arrivalTime: date && !Number.isNaN(date.getTime()) ? formatArrivalTime(date) : '',
         timestamp,
       });
-    } else if (values.length === 5) {
+    } else if (row.StudentName && row.ParentName && row.Timestamp) {
+      const timestamp = row.Timestamp;
       record = normalizeRecord({
-        studentName: values[0],
-        parentName: values[1],
-        arrivalDate: values[2],
-        arrivalTime: values[3],
-        timestamp: values[4],
+        studentName: row.StudentName,
+        parentName: row.ParentName,
+        arrivalDate: row.ArrivalDate,
+        arrivalTime: row.ArrivalTime,
+        timestamp,
       });
-    } else if (values.length === 8) {
+    } else if (row.StudentName && row.EventDate && row.DropOffTimestamp) {
       record = normalizeRecord({
-        studentName: values[0],
-        eventDate: values[1],
-        dropOffParentName: values[2],
-        dropOffTime: values[3],
-        dropOffTimestamp: values[4],
-        pickUpParentName: values[5],
-        pickUpTime: values[6],
-        pickUpTimestamp: values[7],
-      });
-    } else if (values.length >= 10) {
-      record = normalizeRecord({
-        studentName: values[0],
-        eventDate: values[1],
-        dropOffParentName: values[2],
-        dropOffTime: values[3],
-        dropOffTimestamp: values[4],
-        dropOffLateReason: values[5],
-        pickUpParentName: values[6],
-        pickUpTime: values[7],
-        pickUpTimestamp: values[8],
-        pickUpLateReason: values[9],
-        pickUpLatePaymentConfirmed: values[10] === 'true',
-        pickUpLatePaymentReceipt: values[11] || '',
-        pickUpLatePaymentMethod: values[12] || DEFAULT_LATE_PAYMENT_METHOD,
-      });
-    } else if (values.length >= 6) {
-      record = normalizeRecord({
-        studentName: values[0],
-        parentName: values[1],
-        arrivalDate: values[3],
-        arrivalTime: values[4],
-        timestamp: values[5],
+        studentName: row.StudentName,
+        eventDate: row.EventDate,
+        dropOffParentName: row.DropOffParentName,
+        dropOffTime: row.DropOffTime,
+        dropOffTimestamp: row.DropOffTimestamp,
+        dropOffLateReason: row.DropOffLateReason,
+        pickUpParentName: row.PickUpParentName,
+        pickUpTime: row.PickUpTime,
+        pickUpTimestamp: row.PickUpTimestamp,
+        pickUpLateReason: row.PickUpLateReason,
+        pickUpLatePaymentConfirmed: row.PickUpLatePaymentConfirmed === 'true',
+        pickUpLatePaymentReceipt: row.PickUpLatePaymentReceipt,
+        pickUpLatePaymentMethod: row.PickUpLatePaymentMethod || DEFAULT_LATE_PAYMENT_METHOD,
       });
     }
 
