@@ -3,8 +3,9 @@ let latePaymentRequired = false;
 
 window.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('input[name="action"]').forEach((input) => {
-    input.addEventListener('change', resetLateReasonPrompt);
+    input.addEventListener('change', updateReasonPrompt);
   });
+  updateReasonPrompt();
 });
 
 async function checkIn() {
@@ -132,6 +133,7 @@ function showLateReasonPrompt(error) {
   const actionLabel = error.action === 'pick_up' ? 'pick-up' : 'drop-off';
   const group = document.getElementById("lateReasonGroup");
   const lateReason = document.getElementById("lateReason");
+  const lateReasonLabel = document.getElementById("lateReasonLabel");
   const paymentGroup = document.getElementById("latePaymentGroup");
   const latePaymentConfirmed = document.getElementById("latePaymentConfirmed");
   const latePaymentReceipt = document.getElementById("latePaymentReceipt");
@@ -142,6 +144,7 @@ function showLateReasonPrompt(error) {
   lateReasonRequired = true;
   latePaymentRequired = error.requiresLatePayment === true && error.action === 'pick_up';
   group.hidden = false;
+  lateReasonLabel.innerText = `Reason for late ${actionLabel}`;
   lateReason.required = true;
   paymentGroup.hidden = !latePaymentRequired;
   latePaymentConfirmed.required = latePaymentRequired;
@@ -157,9 +160,9 @@ function showLateReasonPrompt(error) {
     : `This ${actionLabel} is marked late. Please enter a reason.`;
 }
 
-function resetLateReasonPrompt() {
-  const group = document.getElementById("lateReasonGroup");
+function updateReasonPrompt() {
   const lateReason = document.getElementById("lateReason");
+  const lateReasonLabel = document.getElementById("lateReasonLabel");
   const paymentGroup = document.getElementById("latePaymentGroup");
   const latePaymentConfirmed = document.getElementById("latePaymentConfirmed");
   const latePaymentReceipt = document.getElementById("latePaymentReceipt");
@@ -168,9 +171,8 @@ function resetLateReasonPrompt() {
 
   lateReasonRequired = false;
   latePaymentRequired = false;
-  group.hidden = true;
   lateReason.required = false;
-  lateReason.value = "";
+  lateReasonLabel.innerText = `${document.querySelector('input[name="action"]:checked').value === 'pick_up' ? 'Pick-up' : 'Drop-off'} reason (optional)`;
   paymentGroup.hidden = true;
   latePaymentConfirmed.required = false;
   latePaymentConfirmed.checked = false;
