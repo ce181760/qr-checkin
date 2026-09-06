@@ -202,6 +202,35 @@
   background: #e2e8f0;
 }
 
+.schedule-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.schedule-grid fieldset {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.schedule-grid legend {
+  color: #1e293b;
+  font-weight: 600;
+}
+
+.schedule-grid label,
+.schedule-grid input {
+  display: block;
+  width: 100%;
+}
+
+.schedule-grid input {
+  box-sizing: border-box;
+  margin: 0.35rem 0 0.85rem;
+}
+
 /* Filter Controls Bar */
 .filter-controls-bar {
   display: flex;

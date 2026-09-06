@@ -171,7 +171,11 @@ function getRecordDate(record) {
 
 function isEarlyDismissalRecord(record) {
   if (!record.pickUpTimestamp) return false;
-  const cutoff = currentScheduleSettings?.latePickUpAfter || '13:35';
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'long' }).format(new Date(record.pickUpTimestamp));
+  const schedule = weekday === 'Wednesday'
+    ? currentScheduleSettings?.wednesday
+    : currentScheduleSettings?.regular;
+  const cutoff = schedule?.pickUpBegins || currentScheduleSettings?.pickUpBegins || '14:30';
   const [cutoffHours, cutoffMinutes] = cutoff.split(':').map(Number);
   const pickupParts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',

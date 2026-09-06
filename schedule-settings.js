@@ -1,5 +1,8 @@
 const DEFAULT_LATE_DROP_OFF_AFTER = '08:36';
 const DEFAULT_LATE_PICK_UP_AFTER = '13:35';
+const DEFAULT_REGULAR_PICK_UP_BEGINS = '14:30';
+const DEFAULT_WEDNESDAY_PICK_UP_BEGINS = '13:30';
+const DEFAULT_WEDNESDAY_LATE_PICK_UP_AFTER = '13:45';
 
 function isValidTimeValue(value) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
@@ -30,6 +33,24 @@ function normalizeScheduleSettings(settings = {}) {
     latePickUpAfter,
     overrides: normalizedOverrides,
   };
+}
+
+function getDaySchedule(timestamp, settings = {}) {
+  const normalizedSettings = normalizeScheduleSettings(settings);
+  const regular = settings.regular || {
+    lateDropOffAfter: normalizedSettings.lateDropOffAfter,
+    pickUpBegins: DEFAULT_REGULAR_PICK_UP_BEGINS,
+    latePickUpAfter: normalizedSettings.latePickUpAfter,
+  };
+  const wednesday = settings.wednesday || {
+    lateDropOffAfter: normalizedSettings.lateDropOffAfter,
+    pickUpBegins: DEFAULT_WEDNESDAY_PICK_UP_BEGINS,
+    latePickUpAfter: DEFAULT_WEDNESDAY_LATE_PICK_UP_AFTER,
+  };
+  const date = new Date(timestamp);
+  return date.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' }) === 'Wednesday'
+    ? wednesday
+    : regular;
 }
 
 function getEffectiveScheduleTime(action, timestamp, settings = {}) {
@@ -70,4 +91,5 @@ module.exports = {
   isValidTimeValue,
   normalizeScheduleSettings,
   getEffectiveScheduleTime,
+  getDaySchedule,
 };

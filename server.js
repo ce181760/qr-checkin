@@ -26,8 +26,8 @@ const REPORT_EMAIL = process.env.REPORT_EMAIL || '';
 const DAILY_REPORT_EMAIL = process.env.DAILY_REPORT_EMAIL || REPORT_EMAIL;
 const MONTHLY_REPORT_EMAIL = process.env.MONTHLY_REPORT_EMAIL || REPORT_EMAIL;
 const ARRIVAL_TIME_ZONE = 'America/New_York';
-const DEFAULT_LATE_DROP_OFF_AFTER = '08:36';
-const DEFAULT_LATE_PICK_UP_AFTER = '13:35';
+const DEFAULT_LATE_DROP_OFF_AFTER = '08:15';
+const DEFAULT_LATE_PICK_UP_AFTER = '14:45';
 const DEFAULT_SENDER_NAME = 'Event Check-In';
 const LATE_PICK_UP_FEE_AMOUNT = '$10';
 const LATE_PICK_UP_PAYMENT_HANDLE = '@phcs1166';
@@ -205,14 +205,45 @@ function normalizeSenderSettings(profile = {}) {
 }
 
 function normalizeScheduleSettings(settings = {}) {
-  const lateDropOffAfter = isValidTimeValue(settings.lateDropOffAfter || settings.late_drop_off_after)
-    ? (settings.lateDropOffAfter || settings.late_drop_off_after)
+  let source = settings;
+  if (typeof settings === 'string') {
+    try {
+      source = JSON.parse(settings);
+    } catch (error) {
+      source = {};
+    }
+  }
+  const regular = source.regular || source;
+  const wednesday = source.wednesday || {};
+  const lateDropOffAfter = isValidTimeValue(regular.lateDropOffAfter || source.late_drop_off_after)
+    ? (regular.lateDropOffAfter || source.late_drop_off_after)
     : DEFAULT_LATE_DROP_OFF_AFTER;
-  const latePickUpAfter = isValidTimeValue(settings.latePickUpAfter || settings.late_pick_up_after)
-    ? (settings.latePickUpAfter || settings.late_pick_up_after)
+  const latePickUpAfter = isValidTimeValue(regular.latePickUpAfter || source.late_pick_up_after)
+    ? (regular.latePickUpAfter || source.late_pick_up_after)
     : DEFAULT_LATE_PICK_UP_AFTER;
+  const legacyPickUpBeginsMinutes = Math.max(0, timeToMinutes(latePickUpAfter) - 15);
+  const legacyPickUpBegins = `${String(Math.floor(legacyPickUpBeginsMinutes / 60)).padStart(2, '0')}:${String(legacyPickUpBeginsMinutes % 60).padStart(2, '0')}`;
+  const pickUpBegins = isValidTimeValue(regular.pickUpBegins) ? regular.pickUpBegins : legacyPickUpBegins;
 
-  return { lateDropOffAfter, latePickUpAfter };
+  return {
+    lateDropOffAfter,
+    latePickUpAfter,
+    pickUpBegins,
+    regular: { lateDropOffAfter, pickUpBegins, latePickUpAfter },
+    wednesday: {
+      lateDropOffAfter: isValidTimeValue(wednesday.lateDropOffAfter) ? wednesday.lateDropOffAfter : lateDropOffAfter,
+      pickUpBegins: isValidTimeValue(wednesday.pickUpBegins) ? wednesday.pickUpBegins : '13:30',
+      latePickUpAfter: isValidTimeValue(wednesday.latePickUpAfter) ? wednesday.latePickUpAfter : '13:45',
+    },
+  };
+}
+
+function getScheduleForTimestamp(timestamp, scheduleSettings) {
+  const settings = normalizeScheduleSettings(scheduleSettings);
+  const date = timestamp ? new Date(timestamp) : null;
+  if (!date || Number.isNaN(date.getTime())) return settings.regular;
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: ARRIVAL_TIME_ZONE, weekday: 'long' }).format(date);
+  return weekday === 'Wednesday' ? settings.wednesday : settings.regular;
 }
 
 function normalizeDailyReportSettings(settings = {}) {
@@ -307,12 +338,13 @@ function shouldSendScheduledReport(now, reportTime) {
 }
 
 function getTimingFlags(record, scheduleSettings) {
-  const settings = normalizeScheduleSettings(scheduleSettings);
   const flags = [];
   const dropOffMinutes = timestampToLocalMinutes(record.dropOffTimestamp || record.timestamp);
   const pickUpMinutes = timestampToLocalMinutes(record.pickUpTimestamp);
-  const lateDropOffMinutes = timeToMinutes(settings.lateDropOffAfter);
-  const latePickUpMinutes = timeToMinutes(settings.latePickUpAfter);
+  const dropOffSettings = getScheduleForTimestamp(record.dropOffTimestamp || record.timestamp, scheduleSettings);
+  const pickUpSettings = getScheduleForTimestamp(record.pickUpTimestamp, scheduleSettings);
+  const lateDropOffMinutes = timeToMinutes(dropOffSettings.lateDropOffAfter);
+  const latePickUpMinutes = timeToMinutes(pickUpSettings.latePickUpAfter);
 
   if (dropOffMinutes !== null && lateDropOffMinutes !== null && dropOffMinutes >= lateDropOffMinutes) {
     flags.push('Late Drop-off');
@@ -326,7 +358,7 @@ function getTimingFlags(record, scheduleSettings) {
 }
 
 function getActionTimingStatus(action, timestamp, scheduleSettings) {
-  const settings = normalizeScheduleSettings(scheduleSettings);
+  const settings = getScheduleForTimestamp(timestamp, scheduleSettings);
   const actionMinutes = timestampToLocalMinutes(timestamp);
   const cutoff = action === 'pick_up' ? settings.latePickUpAfter : settings.lateDropOffAfter;
   const cutoffMinutes = timeToMinutes(cutoff);
@@ -798,6 +830,10 @@ app.get('/admin/sender-settings', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin-sender-settings.html'));
 });
 
+app.get('/admin/schedule-settings', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-schedule-settings.html'));
+});
+
 function ensureAdminFile() {
   ensureDir();
   if (!fs.existsSync(adminFile)) {
@@ -852,7 +888,7 @@ function normalizeAdminProfile(profile) {
       latePickUpAfter: profile.latePickUpAfter,
       late_drop_off_after: profile.late_drop_off_after,
       late_pick_up_after: profile.late_pick_up_after,
-      ...(profile.scheduleSettings || {}),
+      ...(profile.scheduleSettings || profile.schedule_settings || {}),
     }),
     dailyReportSettings: normalizeDailyReportSettings({
       reportMode: profile.reportMode,
@@ -901,7 +937,8 @@ async function ensureAdminTable() {
       combined_report_time TEXT,
       drop_off_report_time TEXT,
       pick_up_report_time TEXT
-      ,paper_savings TEXT
+      ,paper_savings TEXT,
+      schedule_settings TEXT
     )
   `);
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS report_email TEXT');
@@ -922,6 +959,7 @@ async function ensureAdminTable() {
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS drop_off_report_time TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS pick_up_report_time TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS paper_savings TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS schedule_settings TEXT');
   adminTableReady = true;
 }
 
@@ -962,9 +1000,9 @@ async function writeAdminProfile(profile) {
         last_password_change, last_reminder_sent,
         last_daily_report_sent, last_daily_drop_off_report_sent, last_daily_pick_up_report_sent,
         last_monthly_report_sent, late_drop_off_after, late_pick_up_after,
-        daily_report_mode, combined_report_time, drop_off_report_time, pick_up_report_time, paper_savings
+        daily_report_mode, combined_report_time, drop_off_report_time, pick_up_report_time, paper_savings, schedule_settings
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
       ON CONFLICT (id) DO UPDATE SET
         username = EXCLUDED.username,
         password = EXCLUDED.password,
@@ -988,7 +1026,8 @@ async function writeAdminProfile(profile) {
         combined_report_time = EXCLUDED.combined_report_time,
         drop_off_report_time = EXCLUDED.drop_off_report_time,
         pick_up_report_time = EXCLUDED.pick_up_report_time,
-        paper_savings = EXCLUDED.paper_savings
+        paper_savings = EXCLUDED.paper_savings,
+        schedule_settings = EXCLUDED.schedule_settings
     `, [
       profile.username,
       profile.password,
@@ -1013,6 +1052,7 @@ async function writeAdminProfile(profile) {
       normalizeDailyReportSettings(profile.dailyReportSettings).dropOffReportTime,
       normalizeDailyReportSettings(profile.dailyReportSettings).pickUpReportTime,
       JSON.stringify(normalizePaperSavings(profile.paperSavings)),
+      JSON.stringify(normalizeScheduleSettings(profile.scheduleSettings)),
     ]);
     return;
   }
@@ -1676,9 +1716,23 @@ app.get('/api/admin/schedule-settings', basicAuth, async (req, res) => {
 });
 
 app.post('/api/admin/schedule-settings', basicAuth, async (req, res) => {
+  const submittedTimes = [
+    req.body.regular?.lateDropOffAfter,
+    req.body.regular?.pickUpBegins,
+    req.body.regular?.latePickUpAfter,
+    req.body.wednesday?.lateDropOffAfter,
+    req.body.wednesday?.pickUpBegins,
+    req.body.wednesday?.latePickUpAfter,
+  ];
+  if (!submittedTimes.every(isValidTimeValue)) {
+    return res.status(400).json({ error: 'All schedule times must use HH:MM format.' });
+  }
   const scheduleSettings = normalizeScheduleSettings(req.body);
-  if (!isValidTimeValue(req.body.lateDropOffAfter) || !isValidTimeValue(req.body.latePickUpAfter)) {
-    return res.status(400).json({ error: 'Late drop-off and late pick-up times must use HH:MM format.' });
+  if (
+    timeToMinutes(scheduleSettings.regular.pickUpBegins) >= timeToMinutes(scheduleSettings.regular.latePickUpAfter)
+    || timeToMinutes(scheduleSettings.wednesday.pickUpBegins) >= timeToMinutes(scheduleSettings.wednesday.latePickUpAfter)
+  ) {
+    return res.status(400).json({ error: 'Pick-up begins must be earlier than late pick-up.' });
   }
 
   const profile = await readAdminProfile();

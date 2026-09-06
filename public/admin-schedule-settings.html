@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Schedule Settings - QR Check-In</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/admin-styles.css" />
+  <script src="/admin-schedule-settings.js" defer></script>
+</head>
+<body>
+  <main>
+    <div id="loginBox">
+      <h1>Admin Login</h1>
+      <form onsubmit="login(); return false;">
+        <label for="username">Username</label>
+        <input id="username" type="text" required />
+        <label for="password">Password</label>
+        <input id="password" type="password" required />
+        <button type="submit">Login</button>
+      </form>
+      <div id="error" class="save-message"></div>
+    </div>
+
+    <section id="scheduleSettingsPage" style="display: none;">
+      <div class="dashboard-header">
+        <div><h1>Schedule Settings</h1></div>
+        <div class="user-controls">
+          <button type="button" onclick="window.location.href='/admin/account'">Back to Account</button>
+          <button type="button" id="logoutBtn" onclick="logout()">Logout</button>
+        </div>
+      </div>
+      <form class="schedule-settings-form" onsubmit="saveScheduleSettings(); return false;">
+        <p class="settings-note">Times use the app's USA Eastern time zone.</p>
+        <div class="schedule-grid">
+          <fieldset>
+            <legend>Regular Days: Monday, Tuesday, Thursday, Friday</legend>
+            <label for="regularLateDropOffAfter">Late drop-off after</label>
+            <input id="regularLateDropOffAfter" type="time" required />
+            <label for="regularPickUpBegins">Pick-up begins</label>
+            <input id="regularPickUpBegins" type="time" required />
+            <label for="regularLatePickUpAfter">Late pick-up after</label>
+            <input id="regularLatePickUpAfter" type="time" required />
+          </fieldset>
+          <fieldset>
+            <legend>Wednesday: Early Release</legend>
+            <label for="wednesdayLateDropOffAfter">Late drop-off after</label>
+            <input id="wednesdayLateDropOffAfter" type="time" required />
+            <label for="wednesdayPickUpBegins">Pick-up begins</label>
+            <input id="wednesdayPickUpBegins" type="time" required />
+            <label for="wednesdayLatePickUpAfter">Late pick-up after</label>
+            <input id="wednesdayLatePickUpAfter" type="time" required />
+          </fieldset>
+        </div>
+        <button type="submit" class="btn-primary">Save Schedule Settings</button>
+        <div id="scheduleSettingsMessage" class="save-message"></div>
+      </form>
+    </section>
+  </main>
+</body>
+</html>
