@@ -230,6 +230,41 @@ function normalizeDailyReportSettings(settings = {}) {
   };
 }
 
+function normalizePaperSavings(value = {}) {
+  let source = value && typeof value === 'object' ? value : {};
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      source = JSON.parse(value);
+    } catch (error) {
+      source = {};
+    }
+  }
+  const entries = Array.isArray(source.entries) ? source.entries : [];
+  return {
+    entries: entries
+      .filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry.date) && Number.isFinite(entry.savedRows) && entry.savedRows > 0 && entry.reportId)
+      .slice(-400),
+  };
+}
+
+function getPaperSavingsSummary(paperSavings, today = formatArrivalDate(new Date())) {
+  const entries = normalizePaperSavings(paperSavings).entries;
+  const todayDate = new Date(`${today}T12:00:00Z`);
+  const weekStart = new Date(todayDate);
+  weekStart.setUTCDate(weekStart.getUTCDate() - 6);
+  const weekStartKey = weekStart.toISOString().slice(0, 10);
+  const monthKey = today.slice(0, 7);
+  const totalFor = (predicate) => entries
+    .filter(predicate)
+    .reduce((total, entry) => total + entry.savedRows, 0);
+
+  return {
+    today: totalFor((entry) => entry.date === today),
+    week: totalFor((entry) => entry.date >= weekStartKey && entry.date <= today),
+    month: totalFor((entry) => entry.date.startsWith(monthKey)),
+  };
+}
+
 function timeToMinutes(value) {
   if (!isValidTimeValue(value)) {
     return null;
@@ -789,6 +824,7 @@ function getDefaultAdminProfile() {
     lastMonthlyReportSent: null,
     scheduleSettings: normalizeScheduleSettings(),
     dailyReportSettings: normalizeDailyReportSettings(),
+    paperSavings: normalizePaperSavings(),
   };
 }
 
@@ -831,6 +867,7 @@ function normalizeAdminProfile(profile) {
       pick_up_report_time: profile.pick_up_report_time,
       ...(profile.dailyReportSettings || {}),
     }),
+    paperSavings: normalizePaperSavings(profile.paperSavings),
   };
 }
 
@@ -864,6 +901,7 @@ async function ensureAdminTable() {
       combined_report_time TEXT,
       drop_off_report_time TEXT,
       pick_up_report_time TEXT
+      ,paper_savings TEXT
     )
   `);
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS report_email TEXT');
@@ -883,6 +921,7 @@ async function ensureAdminTable() {
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS combined_report_time TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS drop_off_report_time TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS pick_up_report_time TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS paper_savings TEXT');
   adminTableReady = true;
 }
 
@@ -923,9 +962,9 @@ async function writeAdminProfile(profile) {
         last_password_change, last_reminder_sent,
         last_daily_report_sent, last_daily_drop_off_report_sent, last_daily_pick_up_report_sent,
         last_monthly_report_sent, late_drop_off_after, late_pick_up_after,
-        daily_report_mode, combined_report_time, drop_off_report_time, pick_up_report_time
+        daily_report_mode, combined_report_time, drop_off_report_time, pick_up_report_time, paper_savings
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
       ON CONFLICT (id) DO UPDATE SET
         username = EXCLUDED.username,
         password = EXCLUDED.password,
@@ -948,7 +987,8 @@ async function writeAdminProfile(profile) {
         daily_report_mode = EXCLUDED.daily_report_mode,
         combined_report_time = EXCLUDED.combined_report_time,
         drop_off_report_time = EXCLUDED.drop_off_report_time,
-        pick_up_report_time = EXCLUDED.pick_up_report_time
+        pick_up_report_time = EXCLUDED.pick_up_report_time,
+        paper_savings = EXCLUDED.paper_savings
     `, [
       profile.username,
       profile.password,
@@ -972,6 +1012,7 @@ async function writeAdminProfile(profile) {
       normalizeDailyReportSettings(profile.dailyReportSettings).combinedReportTime,
       normalizeDailyReportSettings(profile.dailyReportSettings).dropOffReportTime,
       normalizeDailyReportSettings(profile.dailyReportSettings).pickUpReportTime,
+      JSON.stringify(normalizePaperSavings(profile.paperSavings)),
     ]);
     return;
   }
@@ -1237,7 +1278,7 @@ function createReportPdfBuffer(title, text) {
   return Buffer.from(pdf, 'utf8');
 }
 
-async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new Date()), reportKind = 'combined') {
+async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new Date()), reportKind = 'combined', selectedRecords = null) {
   const transporter = getMailTransport(profile);
   const recipients = getReportRecipientsWithSender(profile);
   if (!transporter) {
@@ -1254,7 +1295,7 @@ async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new
   const allRecords = (await readRecords()).filter((record) => (
     (record.eventDate || record.arrivalDate) === reportDate
   ));
-  const records = allRecords.filter((record) => {
+  const records = Array.isArray(selectedRecords) ? selectedRecords : allRecords.filter((record) => {
     if (reportKind === 'drop_off') {
       return Boolean(record.dropOffTimestamp || record.timestamp);
     }
@@ -1735,7 +1776,8 @@ app.post('/api/admin/daily-report-settings', basicAuth, async (req, res) => {
 app.post('/api/admin/daily-report/email', basicAuth, async (req, res) => {
   try {
     const profile = await readAdminProfile();
-    const sent = await sendDailyRecordReport(profile);
+    const selectedRecords = Array.isArray(req.body.records) ? req.body.records : null;
+    const sent = await sendDailyRecordReport(profile, formatArrivalDate(new Date()), 'combined', selectedRecords);
 
     if (!sent) {
       return res.status(503).json({ error: 'Sender settings are not configured. Add sender email and app password before emailing reports.' });
@@ -1746,6 +1788,28 @@ app.post('/api/admin/daily-report/email', basicAuth, async (req, res) => {
     const statusCode = error.statusCode || 500;
     return res.status(statusCode).json({ error: error.message || 'Unable to email daily report' });
   }
+});
+
+app.get('/api/admin/paper-savings', basicAuth, async (req, res) => {
+  const profile = await readAdminProfile();
+  res.json(getPaperSavingsSummary(profile.paperSavings));
+});
+
+app.post('/api/admin/paper-savings', basicAuth, async (req, res) => {
+  const savedRows = Number(req.body.savedRows);
+  const reportId = String(req.body.reportId || '');
+  if (!Number.isInteger(savedRows) || savedRows <= 0 || savedRows > 100000 || !reportId || reportId.length > 20000) {
+    return res.status(400).json({ error: 'A valid paper-saving report is required.' });
+  }
+
+  const profile = await readAdminProfile();
+  const paperSavings = normalizePaperSavings(profile.paperSavings);
+  if (!paperSavings.entries.some((entry) => entry.reportId === reportId)) {
+    paperSavings.entries.push({ date: formatArrivalDate(new Date()), reportId, savedRows });
+    paperSavings.entries = paperSavings.entries.slice(-400);
+    await writeAdminProfile({ ...profile, paperSavings });
+  }
+  res.json(getPaperSavingsSummary(paperSavings));
 });
 
 app.get('/api/records', basicAuth, async (req, res) => {

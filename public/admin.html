@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Staff Dashboard</title>
+  <title>Staff Dashboard - QR Check-In</title>
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/admin-styles.css" />
   <script src="/admin.js" defer></script>
@@ -26,29 +26,138 @@
 
     <!-- DASHBOARD (hidden until login) -->
     <div id="dashboard" style="display: none;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-        <h1>Attendance Dashboard</h1>
+      <div class="dashboard-header">
         <div>
-          <span id="userName" style="margin-right: 1rem; color: #666;"></span>
+          <h1>Attendance Dashboard</h1>
+          <p class="subtitle" id="dashboardSubtitle">Real-time digital monitoring &amp; reporting system</p>
+        </div>
+        <div class="user-controls">
+          <span id="userName"></span>
+          <button type="button" id="accountBtn" onclick="window.location.href='/admin/account'">Account</button>
           <button type="button" id="logoutBtn" onclick="logout()">Logout</button>
         </div>
       </div>
 
-      <div id="adminToolbar" class="toolbar">
-        <input id="search" type="search" placeholder="Search student or parent name" oninput="filterTable()" />
-        <button id="exportBtn" type="button" onclick="exportCSV()">Export CSV</button>
-        <button id="accountBtn" type="button" onclick="window.location.href='/admin/account'">Admin Account</button>
-        <button id="print" type="button" onclick="printPage()">Print / Save PDF</button>
+      <!-- DAILY SUMMARY / METRICS BANNER -->
+      <div id="summaryBanner" class="summary-banner">
+        <div class="summary-header-row">
+          <h2 id="summaryTitle">Daily Attendance Summary</h2>
+          <div class="summary-date-badge" id="summaryDateBadge"></div>
+        </div>
+        <div class="summary-cards">
+          <div class="summary-card">
+            <span class="card-icon">👥</span>
+            <div class="card-info">
+              <span class="card-value" id="statTotal">0</span>
+              <span class="card-label">Total Check-ins</span>
+            </div>
+          </div>
+          <div class="summary-card card-success">
+            <span class="card-icon">✅</span>
+            <div class="card-info">
+              <span class="card-value" id="statOnTime">0</span>
+              <span class="card-label">On Time</span>
+            </div>
+          </div>
+          <div class="summary-card card-warning">
+            <span class="card-icon">🕐</span>
+            <div class="card-info">
+              <span class="card-value" id="statLate">0</span>
+              <span class="card-label">Late Arrivals</span>
+            </div>
+          </div>
+          <div class="summary-card card-info">
+            <span class="card-icon">📋</span>
+            <div class="card-info">
+              <span class="card-value" id="statPickups">0</span>
+              <span class="card-label">Pick-ups / Dismissals</span>
+            </div>
+          </div>
+          <div class="summary-card card-warning">
+            <span class="card-icon">↩</span>
+            <div class="card-info">
+              <span class="card-value" id="statEarlyDismissals">0</span>
+              <span class="card-label">Early Dismissals</span>
+            </div>
+          </div>
+        </div>
       </div>
 
+      <section class="report-panel" aria-label="Daily report">
+        <div class="report-details">
+          <strong>Paper-Saving Report</strong>
+          <span id="reportSummary">Daily Report</span>
+          <span id="paperSavingSummary"></span>
+          <span id="paperSavingsSummary">Today: 0 rows avoided. This week: 0. This month: 0 (estimated 0 pages avoided).</span>
+        </div>
+        <label class="exceptions-toggle">
+          <input type="checkbox" id="exceptionsOnly" onchange="applyFilters()" checked />
+          Include only exceptions
+        </label>
+        <div class="report-scope-actions">
+          <button type="button" onclick="setReportScope(true)" class="scope-btn">Exceptions Only</button>
+          <button type="button" onclick="setReportScope(false)" class="scope-btn">Full Report</button>
+        </div>
+        <div class="report-actions">
+          <button id="printTodayBtn" type="button" onclick="printReportWithScope(true)" class="btn-primary">Print Exceptions - Recommended</button>
+          <button type="button" onclick="printReportWithScope(false)" class="btn-secondary">Print Full Report</button>
+          <button id="pdfReportBtn" type="button" onclick="downloadPdfReport()" class="btn-secondary">Download PDF</button>
+          <button id="emailReportBtn" type="button" onclick="emailDailyReport()" class="btn-secondary">Email Today's Report</button>
+        </div>
+      </section>
+
+      <!-- FILTER TABS & CONTROLS -->
+      <div class="filter-controls-bar">
+        <div class="view-tabs">
+          <button type="button" class="tab-btn active" id="tabToday" onclick="setActiveTab('today')">Today's Check-ins</button>
+          <button type="button" class="tab-btn" id="tabAll" onclick="setActiveTab('all')">All Records</button>
+          <button type="button" class="tab-btn" id="tabLate" onclick="setActiveTab('late')">Late Only</button>
+          <button type="button" class="tab-btn" id="tabPickups" onclick="setActiveTab('pickups')">Pick-ups Only</button>
+          <button type="button" class="tab-btn" id="tabEarlyDismissals" onclick="setActiveTab('earlyDismissals')">Early Dismissals</button>
+        </div>
+
+        <div class="auto-refresh-box">
+          <label class="refresh-toggle">
+            <input type="checkbox" id="autoRefreshToggle" onchange="toggleAutoRefresh()" />
+            <span>Live Auto-Refresh (15s)</span>
+          </label>
+          <button type="button" class="icon-btn" onclick="loadData()" title="Refresh now">🔄 Refresh</button>
+        </div>
+      </div>
+
+      <!-- SEARCH & DATE FILTER TOOLBAR -->
+      <div id="adminToolbar" class="toolbar">
+        <div class="search-box">
+          <input id="search" type="search" placeholder="Search student, parent, or late reason..." oninput="applyFilters()" />
+        </div>
+        <div class="date-filter-box">
+          <label for="filterDate">Date:</label>
+          <input type="date" id="filterDate" onchange="applyFilters()" />
+          <label for="filterStartDate">From:</label>
+          <input type="date" id="filterStartDate" onchange="applyFilters()" />
+          <label for="filterEndDate">To:</label>
+          <input type="date" id="filterEndDate" onchange="applyFilters()" />
+          <button type="button" class="clear-date-btn" onclick="clearDateFilter()">Clear Date</button>
+        </div>
+        <div class="toolbar-actions">
+          <button id="exportBtn" type="button" onclick="exportCSV()" class="btn-secondary">Download Excel Report</button>
+        </div>
+      </div>
+
+      <!-- RECORDS TABLE SECTION -->
       <div id="recordsSection">
-        <table>
+        <div class="records-status-bar">
+          Showing <strong id="visibleCount">0</strong> record(s)
+        </div>
+        <table class="attendance-table">
           <thead>
             <tr>
-              <th>Student</th>
+              <th>Student Name</th>
+              <th>Parent / Guardian</th>
               <th>Drop-off</th>
               <th>Pick-up</th>
-              <th>Late Reason</th>
+              <th>Reason Late</th>
+              <th>Status</th>
               <th class="actions-column">Actions</th>
             </tr>
           </thead>
