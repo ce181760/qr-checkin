@@ -327,6 +327,25 @@ tbody td {
   font-size: 0.95rem;
 }
 
+.report-email-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.report-send-panel {
+  display: grid;
+  gap: 1rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+}
+
+.report-send-panel h2 {
+  margin: 0;
+}
+
 .save-message {
   min-height: 1.2rem;
   font-weight: 700;

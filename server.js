@@ -19,9 +19,11 @@ const SMTP_HOST = process.env.SMTP_HOST || '';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT, 10) || 587;
 const SMTP_USER = process.env.SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || '';
+const EMAIL_FROM = process.env.EMAIL_FROM || SMTP_USER;
 const SMTP_FROM = process.env.SMTP_FROM || `no-reply@${process.env.SMTP_HOST || 'localhost'}`;
 const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
 const SMTP_TIMEOUT_MS = parseInt(process.env.SMTP_TIMEOUT_MS, 10) || 10000;
+const ENABLE_REPORT_EMAILS = process.env.ENABLE_REPORT_EMAILS === 'true';
 const REPORT_EMAIL = process.env.REPORT_EMAIL || '';
 const DAILY_REPORT_EMAIL = process.env.DAILY_REPORT_EMAIL || REPORT_EMAIL;
 const MONTHLY_REPORT_EMAIL = process.env.MONTHLY_REPORT_EMAIL || REPORT_EMAIL;
@@ -183,24 +185,15 @@ function normalizeReportRecipients(value, fallbackEmail = '') {
     .slice(0, MAX_REPORT_RECIPIENTS);
 }
 
-function getReportRecipientsWithSender(profile = {}) {
-  const senderEmail = normalizeSenderSettings(profile).senderEmail;
-  return normalizeReportRecipients([
-    ...normalizeReportRecipients(profile.reportRecipients, profile.reportEmail || profile.email),
-    senderEmail,
-  ]);
+function getReportRecipientsWithSender() {
+  return normalizeReportRecipients(REPORT_EMAIL);
 }
 
-function normalizeSenderSettings(profile = {}) {
-  const settings = profile.senderSettings || {};
-  const senderEmail = settings.senderEmail || profile.senderEmail || profile.sender_email || SMTP_USER || '';
-  const senderAppPassword = settings.senderAppPassword || profile.senderAppPassword || profile.sender_app_password || SMTP_PASS || '';
-  const senderName = settings.senderName || profile.senderName || profile.sender_name || DEFAULT_SENDER_NAME;
-
+function normalizeSenderSettings() {
   return {
-    senderEmail,
-    senderAppPassword,
-    senderName,
+    senderEmail: EMAIL_FROM,
+    senderAppPassword: SMTP_PASS,
+    senderName: DEFAULT_SENDER_NAME,
   };
 }
 
@@ -822,14 +815,6 @@ app.get('/admin/account', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin-account.html'));
 });
 
-app.get('/admin/report-settings', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin-report-settings.html'));
-});
-
-app.get('/admin/sender-settings', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin-sender-settings.html'));
-});
-
 app.get('/admin/schedule-settings', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin-schedule-settings.html'));
 });
@@ -860,6 +845,7 @@ function getDefaultAdminProfile() {
     lastMonthlyReportSent: null,
     scheduleSettings: normalizeScheduleSettings(),
     dailyReportSettings: normalizeDailyReportSettings(),
+    reportEmailsEnabled: false,
     paperSavings: normalizePaperSavings(),
   };
 }
@@ -903,6 +889,7 @@ function normalizeAdminProfile(profile) {
       pick_up_report_time: profile.pick_up_report_time,
       ...(profile.dailyReportSettings || {}),
     }),
+    reportEmailsEnabled: normalizeBoolean(profile.reportEmailsEnabled ?? profile.report_emails_enabled),
     paperSavings: normalizePaperSavings(profile.paperSavings),
   };
 }
@@ -938,7 +925,8 @@ async function ensureAdminTable() {
       drop_off_report_time TEXT,
       pick_up_report_time TEXT
       ,paper_savings TEXT,
-      schedule_settings TEXT
+      schedule_settings TEXT,
+      report_emails_enabled BOOLEAN NOT NULL DEFAULT FALSE
     )
   `);
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS report_email TEXT');
@@ -960,6 +948,7 @@ async function ensureAdminTable() {
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS pick_up_report_time TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS paper_savings TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS schedule_settings TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS report_emails_enabled BOOLEAN NOT NULL DEFAULT FALSE');
   adminTableReady = true;
 }
 
@@ -1000,9 +989,9 @@ async function writeAdminProfile(profile) {
         last_password_change, last_reminder_sent,
         last_daily_report_sent, last_daily_drop_off_report_sent, last_daily_pick_up_report_sent,
         last_monthly_report_sent, late_drop_off_after, late_pick_up_after,
-        daily_report_mode, combined_report_time, drop_off_report_time, pick_up_report_time, paper_savings, schedule_settings
+        daily_report_mode, combined_report_time, drop_off_report_time, pick_up_report_time, paper_savings, schedule_settings, report_emails_enabled
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
       ON CONFLICT (id) DO UPDATE SET
         username = EXCLUDED.username,
         password = EXCLUDED.password,
@@ -1027,7 +1016,8 @@ async function writeAdminProfile(profile) {
         drop_off_report_time = EXCLUDED.drop_off_report_time,
         pick_up_report_time = EXCLUDED.pick_up_report_time,
         paper_savings = EXCLUDED.paper_savings,
-        schedule_settings = EXCLUDED.schedule_settings
+        schedule_settings = EXCLUDED.schedule_settings,
+        report_emails_enabled = EXCLUDED.report_emails_enabled
     `, [
       profile.username,
       profile.password,
@@ -1053,6 +1043,7 @@ async function writeAdminProfile(profile) {
       normalizeDailyReportSettings(profile.dailyReportSettings).pickUpReportTime,
       JSON.stringify(normalizePaperSavings(profile.paperSavings)),
       JSON.stringify(normalizeScheduleSettings(profile.scheduleSettings)),
+      Boolean(profile.reportEmailsEnabled),
     ]);
     return;
   }
@@ -1086,8 +1077,8 @@ function isReminderDue(profile) {
 function getMailTransport(profile = {}) {
   const senderSettings = normalizeSenderSettings(profile);
   const host = SMTP_HOST || 'smtp.gmail.com';
-  const authUser = senderSettings.senderEmail || SMTP_USER;
-  const authPass = senderSettings.senderAppPassword || SMTP_PASS;
+  const authUser = SMTP_USER;
+  const authPass = SMTP_PASS;
 
   if (!authUser || !authPass || authPass === 'your-app-password' || authPass === 'your-sender-app-password') {
     return null;
@@ -1318,9 +1309,9 @@ function createReportPdfBuffer(title, text) {
   return Buffer.from(pdf, 'utf8');
 }
 
-async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new Date()), reportKind = 'combined', selectedRecords = null) {
+async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new Date()), reportKind = 'combined', selectedRecords = null, recipient = '') {
   const transporter = getMailTransport(profile);
-  const recipients = getReportRecipientsWithSender(profile);
+  const recipients = recipient ? normalizeReportRecipients(recipient) : getReportRecipientsWithSender(profile);
   if (!transporter) {
     console.log('SMTP not configured. Daily record report email not sent.');
     return false;
@@ -1380,9 +1371,9 @@ async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new
   return true;
 }
 
-async function sendMonthlyRecordReport(profile, period = getPreviousMonthReportPeriod()) {
+async function sendMonthlyRecordReport(profile, period = getPreviousMonthReportPeriod(), recipient = '') {
   const transporter = getMailTransport(profile);
-  const recipients = getReportRecipientsWithSender(profile);
+  const recipients = recipient ? normalizeReportRecipients(recipient) : getReportRecipientsWithSender(profile);
   if (!transporter) {
     console.log('SMTP not configured. Monthly record report email not sent.');
     return false;
@@ -1433,6 +1424,9 @@ async function checkAndSendMonthlyReport() {
 
   const period = getPreviousMonthReportPeriod();
   const profile = await readAdminProfile();
+  if (!profile.reportEmailsEnabled) {
+    return;
+  }
   if (profile.lastMonthlyReportSent === period.key) {
     return;
   }
@@ -1453,6 +1447,9 @@ async function checkAndSendDailyReport() {
   const now = new Date();
   const reportDate = formatArrivalDate(now);
   const profile = await readAdminProfile();
+  if (!profile.reportEmailsEnabled) {
+    return;
+  }
   const dailyReportSettings = normalizeDailyReportSettings(profile.dailyReportSettings);
 
   if (dailyReportSettings.reportMode === 'separate') {
@@ -1508,6 +1505,17 @@ async function checkAndSendDailyReport() {
   } catch (error) {
     console.error('Failed to send daily report:', error.message || error);
   }
+}
+
+async function startReportScheduler() {
+  if (!ENABLE_REPORT_EMAILS) {
+    return;
+  }
+
+  await checkAndSendDailyReport();
+  await checkAndSendMonthlyReport();
+  setInterval(checkAndSendDailyReport, 5 * 60 * 1000);
+  setInterval(checkAndSendMonthlyReport, 24 * 60 * 60 * 1000);
 }
 
 async function checkAndSendPasswordReminder() {
@@ -1670,7 +1678,13 @@ app.post('/api/admin/login', async (req, res) => {
 
   const profile = await readAdminProfile();
   if (username === profile.username && password === profile.password) {
-    return res.json({ username: profile.username, email: profile.email, passwordChangeRequired: isPasswordChangeRequired(profile) });
+    return res.json({
+      username: profile.username,
+      email: profile.email,
+      reportEmailsEnabled: ENABLE_REPORT_EMAILS && profile.reportEmailsEnabled,
+      reportEmailsConfigured: ENABLE_REPORT_EMAILS,
+      passwordChangeRequired: isPasswordChangeRequired(profile),
+    });
   }
 
   return res.status(403).json({ error: 'Invalid username or password' });
@@ -1678,7 +1692,59 @@ app.post('/api/admin/login', async (req, res) => {
 
 app.get('/api/admin/profile', basicAuth, async (req, res) => {
   const profile = await readAdminProfile();
-  res.json({ username: profile.username, email: profile.email, passwordChangeRequired: isPasswordChangeRequired(profile) });
+  res.json({
+    username: profile.username,
+    email: profile.email,
+    reportEmailsEnabled: ENABLE_REPORT_EMAILS && profile.reportEmailsEnabled,
+    reportEmailsConfigured: ENABLE_REPORT_EMAILS,
+    passwordChangeRequired: isPasswordChangeRequired(profile),
+  });
+});
+
+app.post('/api/admin/report-email-settings', basicAuth, async (req, res) => {
+  const profile = await readAdminProfile();
+  const reportEmailsEnabled = normalizeBoolean(req.body.reportEmailsEnabled);
+
+  await writeAdminProfile({ ...profile, reportEmailsEnabled });
+  res.json({
+    reportEmailsEnabled: ENABLE_REPORT_EMAILS && reportEmailsEnabled,
+    reportEmailsConfigured: ENABLE_REPORT_EMAILS,
+  });
+});
+
+app.post('/api/admin/send-report', basicAuth, async (req, res) => {
+  if (!ENABLE_REPORT_EMAILS) {
+    return res.status(503).json({ error: 'Report emails are not enabled.' });
+  }
+
+  const profile = await readAdminProfile();
+  if (!profile.reportEmailsEnabled) {
+    return res.status(503).json({ error: 'Turn on Report Emails before sending a report.' });
+  }
+
+  const recipient = String(req.body.recipient || '').trim();
+  const reportType = String(req.body.reportType || '').trim();
+  if (!isValidEmailValue(recipient)) {
+    return res.status(400).json({ error: 'Enter a valid employee email address.' });
+  }
+  if (!['daily', 'monthly'].includes(reportType)) {
+    return res.status(400).json({ error: 'Choose a daily or monthly report.' });
+  }
+
+  try {
+    const sent = reportType === 'daily'
+      ? await sendDailyRecordReport(profile, formatArrivalDate(new Date()), 'combined', null, recipient)
+      : await sendMonthlyRecordReport(profile, getPreviousMonthReportPeriod(), recipient);
+
+    if (!sent) {
+      return res.status(503).json({ error: 'Email is not configured on the server.' });
+    }
+
+    return res.json({ message: `Report sent to ${recipient}.` });
+  } catch (error) {
+    const statusCode = error.statusCode || 502;
+    return res.status(statusCode).json({ error: error.message || 'Unable to send the report.' });
+  }
 });
 
 app.post('/api/admin/profile', basicAuth, async (req, res) => {
@@ -1701,6 +1767,7 @@ app.post('/api/admin/profile', basicAuth, async (req, res) => {
     monthlyReportEmail: currentProfile.monthlyReportEmail || currentProfile.reportEmail || email,
     reportRecipients: currentProfile.reportRecipients || normalizeReportRecipients(currentProfile.reportEmail || email),
     senderSettings: currentProfile.senderSettings || normalizeSenderSettings(currentProfile),
+    reportEmailsEnabled: currentProfile.reportEmailsEnabled === true,
     lastPasswordChange: new Date().toISOString(),
     lastReminderSent: currentProfile.lastReminderSent || null,
     lastMonthlyReportSent: currentProfile.lastMonthlyReportSent || null,
@@ -1742,106 +1809,6 @@ app.post('/api/admin/schedule-settings', basicAuth, async (req, res) => {
   });
 
   res.json(scheduleSettings);
-});
-
-app.get('/api/admin/report-settings', basicAuth, async (req, res) => {
-  const profile = await readAdminProfile();
-  res.json({
-    reportRecipients: normalizeReportRecipients(profile.reportRecipients, profile.reportEmail || profile.email),
-    maxReportRecipients: MAX_REPORT_RECIPIENTS,
-  });
-});
-
-app.post('/api/admin/report-settings', basicAuth, async (req, res) => {
-  const rawRecipients = Array.isArray(req.body.reportRecipients)
-    ? req.body.reportRecipients
-    : normalizeReportRecipients(req.body.reportRecipients || req.body.reportEmail);
-  if (rawRecipients.length > MAX_REPORT_RECIPIENTS) {
-    return res.status(400).json({ error: `You can add up to ${MAX_REPORT_RECIPIENTS} report receivers.` });
-  }
-
-  const reportRecipients = normalizeReportRecipients(req.body.reportRecipients || req.body.reportEmail);
-  if (reportRecipients.some((email) => !isValidEmailValue(email))) {
-    return res.status(400).json({ error: 'Every report receiver must be a valid email address.' });
-  }
-
-  const profile = await readAdminProfile();
-  await writeAdminProfile({
-    ...profile,
-    reportEmail: reportRecipients[0] || profile.reportEmail,
-    dailyReportEmail: reportRecipients[0] || profile.dailyReportEmail,
-    monthlyReportEmail: reportRecipients[0] || profile.monthlyReportEmail,
-    reportRecipients,
-  });
-
-  res.json({ reportRecipients, maxReportRecipients: MAX_REPORT_RECIPIENTS });
-});
-
-app.get('/api/admin/sender-settings', basicAuth, async (req, res) => {
-  const profile = await readAdminProfile();
-  const senderSettings = normalizeSenderSettings(profile);
-  res.json({
-    senderEmail: senderSettings.senderEmail,
-    senderName: senderSettings.senderName,
-    dailyReportSettings: normalizeDailyReportSettings(profile.dailyReportSettings),
-    hasSenderAppPassword: Boolean(senderSettings.senderAppPassword && !senderSettings.senderAppPassword.startsWith('your-')),
-  });
-});
-
-app.post('/api/admin/sender-settings', basicAuth, async (req, res) => {
-  const senderEmail = String(req.body.senderEmail || '').trim();
-  const senderAppPassword = String(req.body.senderAppPassword || '').trim();
-  const senderName = String(req.body.senderName || DEFAULT_SENDER_NAME).trim() || DEFAULT_SENDER_NAME;
-
-  if (!isValidEmailValue(senderEmail)) {
-    return res.status(400).json({ error: 'Sender email must be a valid email address.' });
-  }
-
-  const profile = await readAdminProfile();
-  const existingSenderSettings = normalizeSenderSettings(profile);
-  if (!senderAppPassword && !existingSenderSettings.senderAppPassword) {
-    return res.status(400).json({ error: 'Sender app password is required.' });
-  }
-
-  await writeAdminProfile({
-    ...profile,
-    senderSettings: {
-      senderEmail,
-      senderAppPassword: senderAppPassword || existingSenderSettings.senderAppPassword,
-      senderName,
-    },
-  });
-
-  res.json({ senderEmail, senderName, hasSenderAppPassword: true });
-});
-
-app.post('/api/admin/daily-report-settings', basicAuth, async (req, res) => {
-  const dailyReportSettings = normalizeDailyReportSettings(req.body.dailyReportSettings || {});
-  const profile = await readAdminProfile();
-
-  await writeAdminProfile({
-    ...profile,
-    dailyReportSettings,
-  });
-
-  res.json({ dailyReportSettings });
-});
-
-app.post('/api/admin/daily-report/email', basicAuth, async (req, res) => {
-  try {
-    const profile = await readAdminProfile();
-    const selectedRecords = Array.isArray(req.body.records) ? req.body.records : null;
-    const sent = await sendDailyRecordReport(profile, formatArrivalDate(new Date()), 'combined', selectedRecords);
-
-    if (!sent) {
-      return res.status(503).json({ error: 'Sender settings are not configured. Add sender email and app password before emailing reports.' });
-    }
-
-    return res.json({ message: 'Daily report sent.' });
-  } catch (error) {
-    const statusCode = error.statusCode || 500;
-    return res.status(statusCode).json({ error: error.message || 'Unable to email daily report' });
-  }
 });
 
 app.get('/api/admin/paper-savings', basicAuth, async (req, res) => {
@@ -1945,11 +1912,8 @@ if (require.main === module) {
     console.log(`Admin storage: ${dbPool ? 'database' : adminFile}`);
 
     await checkAndSendPasswordReminder();
-    await checkAndSendDailyReport();
-    await checkAndSendMonthlyReport();
+    await startReportScheduler();
     setInterval(checkAndSendPasswordReminder, 24 * 60 * 60 * 1000);
-    setInterval(checkAndSendDailyReport, 5 * 60 * 1000);
-    setInterval(checkAndSendMonthlyReport, 24 * 60 * 60 * 1000);
   });
 }
 

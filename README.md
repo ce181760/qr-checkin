@@ -106,6 +106,9 @@ Questions or help
    - `ADMIN_PASS` — override default admin password.
    - `ADMIN_EMAIL` — admin email for reminders.
    - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` — for email reminders.
+   - `EMAIL_FROM` — optional sender address; defaults to `SMTP_USER`.
+   - `ENABLE_REPORT_EMAILS` — set to `true` only when scheduled report emails are desired; defaults to disabled.
+   - `REPORT_EMAIL` — server-side recipient for scheduled reports.
 7. Click **Deploy** — Render builds and starts your app in ~2 minutes.
 8. Open the live URL to test.
 
