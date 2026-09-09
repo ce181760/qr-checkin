@@ -362,7 +362,7 @@ function deleteRecord(index) {
     });
 }
 
-function recordMatchesFilters(record, includeExceptionsFilter = true) {
+function recordMatchesFilters(record, includeExceptionsFilter = true, applyCategoryTabFilter = true) {
   const todayStr = getTodayYYYYMMDD();
   const searchInput = (document.getElementById("search")?.value || "").toLowerCase().trim();
   const filterDateVal = document.getElementById("filterDate")?.value || "";
@@ -371,9 +371,11 @@ function recordMatchesFilters(record, includeExceptionsFilter = true) {
   const exceptionsOnly = document.getElementById('exceptionsOnly')?.checked;
 
   if (activeTab === 'today' && !isTodayRecord(record, todayStr)) return false;
-  if (activeTab === 'late' && !isLateRecord(record)) return false;
-  if (activeTab === 'pickups' && !isPickupRecord(record)) return false;
-  if (activeTab === 'earlyDismissals' && !isEarlyDismissalRecord(record)) return false;
+  if (applyCategoryTabFilter) {
+    if (activeTab === 'late' && !isLateRecord(record)) return false;
+    if (activeTab === 'pickups' && !isPickupRecord(record)) return false;
+    if (activeTab === 'earlyDismissals' && !isEarlyDismissalRecord(record)) return false;
+  }
   if (includeExceptionsFilter && exceptionsOnly && !isExceptionRecord(record)) return false;
 
   const recDate = getRecordDate(record);
@@ -547,7 +549,8 @@ function renderTable(records) {
 
 function applyFilters() {
   const filtered = getFilteredRecords();
-  const summaryRecords = currentRecords.filter((record) => recordMatchesFilters(record, false));
+  // Summary cards reflect overall totals (still honoring the today-tab/date filters), independent of the late/pickups/earlyDismissals list tab.
+  const summaryRecords = currentRecords.filter((record) => recordMatchesFilters(record, false, false));
   updateSummaryMetrics(filtered, summaryRecords);
   renderTable(filtered);
 }
