@@ -3,8 +3,9 @@ let latePaymentRequired = false;
 
 window.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('input[name="action"]').forEach((input) => {
-    input.addEventListener('change', resetLateReasonPrompt);
+    input.addEventListener('change', updateReasonPrompt);
   });
+  updateReasonPrompt();
 });
 
 async function checkIn() {
@@ -12,6 +13,7 @@ async function checkIn() {
   const parentName = document.getElementById("parentName").value.trim();
   const action = document.querySelector('input[name="action"]:checked').value;
   const lateReason = document.getElementById("lateReason").value.trim();
+  const latePaymentMethod = document.querySelector('input[name="latePaymentMethod"]:checked').value;
   const latePaymentConfirmed = document.getElementById("latePaymentConfirmed").checked;
   const receiptInput = document.getElementById("latePaymentReceipt");
   const receiptFile = receiptInput.files[0] || null;
@@ -31,7 +33,7 @@ async function checkIn() {
     return;
   }
 
-  if (latePaymentRequired && !receiptFile) {
+  if (latePaymentRequired && latePaymentMethod === 'venmo' && !receiptFile) {
     alert("Upload a receipt screenshot for the late pick-up payment");
     return;
   }
@@ -54,6 +56,7 @@ async function checkIn() {
       parentName,
       action,
       lateReason,
+      latePaymentMethod,
       latePaymentConfirmed,
       latePaymentReceipt
     })
@@ -81,11 +84,17 @@ async function checkIn() {
     url.searchParams.set('studentName', studentName);
     url.searchParams.set('parentName', parentName);
     url.searchParams.set('action', checkin.action || action);
+    if (checkin.eventDate) {
+      url.searchParams.set('eventDate', checkin.eventDate);
+    }
     if (checkin.actionTime) {
       url.searchParams.set('actionTime', checkin.actionTime);
     }
     if (checkin.timingStatus) {
       url.searchParams.set('timingStatus', checkin.timingStatus);
+    }
+    if (lateReason) {
+      url.searchParams.set('lateReason', lateReason);
     }
     window.location.href = url.toString();
   })
@@ -124,41 +133,51 @@ function showLateReasonPrompt(error) {
   const actionLabel = error.action === 'pick_up' ? 'pick-up' : 'drop-off';
   const group = document.getElementById("lateReasonGroup");
   const lateReason = document.getElementById("lateReason");
+  const lateReasonLabel = document.getElementById("lateReasonLabel");
   const paymentGroup = document.getElementById("latePaymentGroup");
   const latePaymentConfirmed = document.getElementById("latePaymentConfirmed");
   const latePaymentReceipt = document.getElementById("latePaymentReceipt");
+  const paymentMethodInputs = document.querySelectorAll('input[name="latePaymentMethod"]');
+  const venmoPaymentDetails = document.getElementById("venmoPaymentDetails");
   const message = document.getElementById("message");
 
   lateReasonRequired = true;
   latePaymentRequired = error.requiresLatePayment === true && error.action === 'pick_up';
   group.hidden = false;
+  lateReasonLabel.innerText = `Reason for late ${actionLabel}`;
   lateReason.required = true;
   paymentGroup.hidden = !latePaymentRequired;
   latePaymentConfirmed.required = latePaymentRequired;
-  latePaymentReceipt.required = latePaymentRequired;
+  latePaymentReceipt.required = latePaymentRequired && document.querySelector('input[name="latePaymentMethod"]:checked').value === 'venmo';
+  paymentMethodInputs.forEach((input) => input.addEventListener('change', () => {
+    const isVenmo = input.checked && input.value === 'venmo';
+    venmoPaymentDetails.hidden = !isVenmo;
+    latePaymentReceipt.required = latePaymentRequired && isVenmo;
+  }));
   lateReason.focus();
   message.innerText = latePaymentRequired
     ? `This ${actionLabel} is marked late. Please enter a reason, pay the $10 late pick-up fee to @phcs1166, and upload the receipt.`
     : `This ${actionLabel} is marked late. Please enter a reason.`;
 }
 
-function resetLateReasonPrompt() {
-  const group = document.getElementById("lateReasonGroup");
+function updateReasonPrompt() {
   const lateReason = document.getElementById("lateReason");
+  const lateReasonLabel = document.getElementById("lateReasonLabel");
   const paymentGroup = document.getElementById("latePaymentGroup");
   const latePaymentConfirmed = document.getElementById("latePaymentConfirmed");
   const latePaymentReceipt = document.getElementById("latePaymentReceipt");
+  const venmoPaymentDetails = document.getElementById("venmoPaymentDetails");
   const message = document.getElementById("message");
 
   lateReasonRequired = false;
   latePaymentRequired = false;
-  group.hidden = true;
   lateReason.required = false;
-  lateReason.value = "";
+  lateReasonLabel.innerText = `${document.querySelector('input[name="action"]:checked').value === 'pick_up' ? 'Pick-up' : 'Drop-off'} reason (optional)`;
   paymentGroup.hidden = true;
   latePaymentConfirmed.required = false;
   latePaymentConfirmed.checked = false;
   latePaymentReceipt.required = false;
   latePaymentReceipt.value = "";
+  venmoPaymentDetails.hidden = false;
   message.innerText = "";
 }

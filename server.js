@@ -20,18 +20,21 @@ const SMTP_HOST = process.env.SMTP_HOST || '';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT, 10) || 587;
 const SMTP_USER = process.env.SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || '';
+const EMAIL_FROM = process.env.EMAIL_FROM || SMTP_USER;
 const SMTP_FROM = process.env.SMTP_FROM || `no-reply@${process.env.SMTP_HOST || 'localhost'}`;
 const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
 const SMTP_TIMEOUT_MS = parseInt(process.env.SMTP_TIMEOUT_MS, 10) || 10000;
+const ENABLE_REPORT_EMAILS = process.env.ENABLE_REPORT_EMAILS === 'true';
 const REPORT_EMAIL = process.env.REPORT_EMAIL || '';
 const DAILY_REPORT_EMAIL = process.env.DAILY_REPORT_EMAIL || REPORT_EMAIL;
 const MONTHLY_REPORT_EMAIL = process.env.MONTHLY_REPORT_EMAIL || REPORT_EMAIL;
 const ARRIVAL_TIME_ZONE = 'America/New_York';
-const DEFAULT_LATE_DROP_OFF_AFTER = '08:36';
-const DEFAULT_LATE_PICK_UP_AFTER = '13:35';
+const DEFAULT_LATE_DROP_OFF_AFTER = '08:15';
+const DEFAULT_LATE_PICK_UP_AFTER = '14:45';
 const DEFAULT_SENDER_NAME = 'Event Check-In';
 const LATE_PICK_UP_FEE_AMOUNT = '$10';
 const LATE_PICK_UP_PAYMENT_HANDLE = '@phcs1166';
+const DEFAULT_LATE_PAYMENT_METHOD = 'venmo';
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
 const RECEIPT_MIME_EXTENSIONS = {
   'image/jpeg': 'jpg',
@@ -115,6 +118,19 @@ function parseCsvLine(line) {
   return values;
 }
 
+function parseAttendanceCsv(csv) {
+  const [headerLine, ...recordLines] = csv.split(/\r?\n/).filter(Boolean);
+  const headers = parseCsvLine(headerLine).map((header) => header.trim());
+
+  return recordLines.map((line) => {
+    const values = parseCsvLine(line);
+    return {
+      row: Object.fromEntries(headers.map((header, index) => [header, values[index] || ''])),
+      values,
+    };
+  });
+}
+
 function formatArrivalDate(date) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: ARRIVAL_TIME_ZONE,
@@ -127,12 +143,13 @@ function formatArrivalDate(date) {
 }
 
 function formatArrivalTime(date) {
-  return new Intl.DateTimeFormat('en-US', {
+  const formatted = new Intl.DateTimeFormat('en-US', {
     timeZone: ARRIVAL_TIME_ZONE,
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
   }).format(date);
+  return formatted.replace(/\s([AP])M$/, (_, period) => `${period.toLowerCase()}m`);
 }
 
 function isValidTimeValue(value) {
@@ -169,36 +186,58 @@ function normalizeReportRecipients(value, fallbackEmail = '') {
     .slice(0, MAX_REPORT_RECIPIENTS);
 }
 
-function getReportRecipientsWithSender(profile = {}) {
-  const senderEmail = normalizeSenderSettings(profile).senderEmail;
-  return normalizeReportRecipients([
-    ...normalizeReportRecipients(profile.reportRecipients, profile.reportEmail || profile.email),
-    senderEmail,
-  ]);
+function getReportRecipientsWithSender() {
+  return normalizeReportRecipients(REPORT_EMAIL);
 }
 
-function normalizeSenderSettings(profile = {}) {
-  const settings = profile.senderSettings || {};
-  const senderEmail = settings.senderEmail || profile.senderEmail || profile.sender_email || SMTP_USER || '';
-  const senderAppPassword = settings.senderAppPassword || profile.senderAppPassword || profile.sender_app_password || SMTP_PASS || '';
-  const senderName = settings.senderName || profile.senderName || profile.sender_name || DEFAULT_SENDER_NAME;
-
+function normalizeSenderSettings() {
   return {
-    senderEmail,
-    senderAppPassword,
-    senderName,
+    senderEmail: EMAIL_FROM,
+    senderAppPassword: SMTP_PASS,
+    senderName: DEFAULT_SENDER_NAME,
   };
 }
 
 function normalizeScheduleSettings(settings = {}) {
-  const lateDropOffAfter = isValidTimeValue(settings.lateDropOffAfter || settings.late_drop_off_after)
-    ? (settings.lateDropOffAfter || settings.late_drop_off_after)
+  let source = settings;
+  if (typeof settings === 'string') {
+    try {
+      source = JSON.parse(settings);
+    } catch (error) {
+      source = {};
+    }
+  }
+  const regular = source.regular || source;
+  const wednesday = source.wednesday || {};
+  const lateDropOffAfter = isValidTimeValue(regular.lateDropOffAfter || source.late_drop_off_after)
+    ? (regular.lateDropOffAfter || source.late_drop_off_after)
     : DEFAULT_LATE_DROP_OFF_AFTER;
-  const latePickUpAfter = isValidTimeValue(settings.latePickUpAfter || settings.late_pick_up_after)
-    ? (settings.latePickUpAfter || settings.late_pick_up_after)
+  const latePickUpAfter = isValidTimeValue(regular.latePickUpAfter || source.late_pick_up_after)
+    ? (regular.latePickUpAfter || source.late_pick_up_after)
     : DEFAULT_LATE_PICK_UP_AFTER;
+  const legacyPickUpBeginsMinutes = Math.max(0, timeToMinutes(latePickUpAfter) - 15);
+  const legacyPickUpBegins = `${String(Math.floor(legacyPickUpBeginsMinutes / 60)).padStart(2, '0')}:${String(legacyPickUpBeginsMinutes % 60).padStart(2, '0')}`;
+  const pickUpBegins = isValidTimeValue(regular.pickUpBegins) ? regular.pickUpBegins : legacyPickUpBegins;
 
-  return { lateDropOffAfter, latePickUpAfter };
+  return {
+    lateDropOffAfter,
+    latePickUpAfter,
+    pickUpBegins,
+    regular: { lateDropOffAfter, pickUpBegins, latePickUpAfter },
+    wednesday: {
+      lateDropOffAfter: isValidTimeValue(wednesday.lateDropOffAfter) ? wednesday.lateDropOffAfter : lateDropOffAfter,
+      pickUpBegins: isValidTimeValue(wednesday.pickUpBegins) ? wednesday.pickUpBegins : '13:30',
+      latePickUpAfter: isValidTimeValue(wednesday.latePickUpAfter) ? wednesday.latePickUpAfter : '13:45',
+    },
+  };
+}
+
+function getScheduleForTimestamp(timestamp, scheduleSettings) {
+  const settings = normalizeScheduleSettings(scheduleSettings);
+  const date = timestamp ? new Date(timestamp) : null;
+  if (!date || Number.isNaN(date.getTime())) return settings.regular;
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: ARRIVAL_TIME_ZONE, weekday: 'long' }).format(date);
+  return weekday === 'Wednesday' ? settings.wednesday : settings.regular;
 }
 
 function normalizeDailyReportSettings(settings = {}) {
@@ -213,6 +252,41 @@ function normalizeDailyReportSettings(settings = {}) {
     combinedReportTime: isValidTimeValue(combinedReportTime) ? combinedReportTime : DEFAULT_DAILY_REPORT_SETTINGS.combinedReportTime,
     dropOffReportTime: isValidTimeValue(dropOffReportTime) ? dropOffReportTime : DEFAULT_DAILY_REPORT_SETTINGS.dropOffReportTime,
     pickUpReportTime: isValidTimeValue(pickUpReportTime) ? pickUpReportTime : DEFAULT_DAILY_REPORT_SETTINGS.pickUpReportTime,
+  };
+}
+
+function normalizePaperSavings(value = {}) {
+  let source = value && typeof value === 'object' ? value : {};
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      source = JSON.parse(value);
+    } catch (error) {
+      source = {};
+    }
+  }
+  const entries = Array.isArray(source.entries) ? source.entries : [];
+  return {
+    entries: entries
+      .filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry.date) && Number.isFinite(entry.savedRows) && entry.savedRows > 0 && entry.reportId)
+      .slice(-400),
+  };
+}
+
+function getPaperSavingsSummary(paperSavings, today = formatArrivalDate(new Date())) {
+  const entries = normalizePaperSavings(paperSavings).entries;
+  const todayDate = new Date(`${today}T12:00:00Z`);
+  const weekStart = new Date(todayDate);
+  weekStart.setUTCDate(weekStart.getUTCDate() - 6);
+  const weekStartKey = weekStart.toISOString().slice(0, 10);
+  const monthKey = today.slice(0, 7);
+  const totalFor = (predicate) => entries
+    .filter(predicate)
+    .reduce((total, entry) => total + entry.savedRows, 0);
+
+  return {
+    today: totalFor((entry) => entry.date === today),
+    week: totalFor((entry) => entry.date >= weekStartKey && entry.date <= today),
+    month: totalFor((entry) => entry.date.startsWith(monthKey)),
   };
 }
 
@@ -258,12 +332,13 @@ function shouldSendScheduledReport(now, reportTime) {
 }
 
 function getTimingFlags(record, scheduleSettings) {
-  const settings = normalizeScheduleSettings(scheduleSettings);
   const flags = [];
   const dropOffMinutes = timestampToLocalMinutes(record.dropOffTimestamp || record.timestamp);
   const pickUpMinutes = timestampToLocalMinutes(record.pickUpTimestamp);
-  const lateDropOffMinutes = timeToMinutes(settings.lateDropOffAfter);
-  const latePickUpMinutes = timeToMinutes(settings.latePickUpAfter);
+  const dropOffSettings = getScheduleForTimestamp(record.dropOffTimestamp || record.timestamp, scheduleSettings);
+  const pickUpSettings = getScheduleForTimestamp(record.pickUpTimestamp, scheduleSettings);
+  const lateDropOffMinutes = timeToMinutes(dropOffSettings.lateDropOffAfter);
+  const latePickUpMinutes = timeToMinutes(pickUpSettings.latePickUpAfter);
 
   if (dropOffMinutes !== null && lateDropOffMinutes !== null && dropOffMinutes >= lateDropOffMinutes) {
     flags.push('Late Drop-off');
@@ -277,7 +352,7 @@ function getTimingFlags(record, scheduleSettings) {
 }
 
 function getActionTimingStatus(action, timestamp, scheduleSettings) {
-  const settings = normalizeScheduleSettings(scheduleSettings);
+  const settings = getScheduleForTimestamp(timestamp, scheduleSettings);
   const actionMinutes = timestampToLocalMinutes(timestamp);
   const cutoff = action === 'pick_up' ? settings.latePickUpAfter : settings.lateDropOffAfter;
   const cutoffMinutes = timeToMinutes(cutoff);
@@ -334,6 +409,7 @@ async function ensureAttendanceTable() {
   await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS pick_up_late_reason TEXT');
   await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS pick_up_late_payment_confirmed BOOLEAN DEFAULT FALSE');
   await dbPool.query('ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS pick_up_late_payment_receipt TEXT');
+  await dbPool.query("ALTER TABLE attendance_records ADD COLUMN IF NOT EXISTS pick_up_late_payment_method TEXT DEFAULT 'venmo'");
   attendanceTableReady = true;
 }
 
@@ -446,6 +522,7 @@ function normalizeRecord(record) {
     pickUpLateReason: record.pickUpLateReason || '',
     pickUpLatePaymentConfirmed: normalizeBoolean(record.pickUpLatePaymentConfirmed),
     pickUpLatePaymentReceipt: record.pickUpLatePaymentReceipt || '',
+    pickUpLatePaymentMethod: record.pickUpLatePaymentMethod === 'cash' ? 'cash' : DEFAULT_LATE_PAYMENT_METHOD,
   };
 
   return {
@@ -466,7 +543,7 @@ function findSessionIndex(records, studentName, eventDate) {
   ));
 }
 
-async function recordAttendanceAction(studentName, parentName, action, lateReason = '', latePaymentConfirmed = false, latePaymentReceipt = null) {
+async function recordAttendanceAction(studentName, parentName, action, lateReason = '', latePaymentConfirmed = false, latePaymentReceipt = null, latePaymentMethod = DEFAULT_LATE_PAYMENT_METHOD) {
   const attendanceAction = normalizeAction(action);
   const actionAt = new Date();
   const timestamp = actionAt.toISOString();
@@ -476,6 +553,7 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
   const timingStatus = getActionTimingStatus(attendanceAction, timestamp, profile.scheduleSettings);
   const trimmedLateReason = String(lateReason || '').trim();
   const paymentConfirmed = normalizeBoolean(latePaymentConfirmed);
+  const paymentMethod = String(latePaymentMethod || DEFAULT_LATE_PAYMENT_METHOD).trim().toLowerCase() === 'cash' ? 'cash' : DEFAULT_LATE_PAYMENT_METHOD;
 
   if (timingStatus === 'Late' && !trimmedLateReason) {
     const actionLabel = attendanceAction === 'pick_up' ? 'pick-up' : 'drop-off';
@@ -493,7 +571,7 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
     throw createLatePickUpRequirementError(`Please confirm the ${LATE_PICK_UP_FEE_AMOUNT} late pick-up payment to ${LATE_PICK_UP_PAYMENT_HANDLE}.`, actionTime);
   }
 
-  if (timingStatus === 'Late' && attendanceAction === 'pick_up' && !hasReceiptPayload(latePaymentReceipt)) {
+  if (timingStatus === 'Late' && attendanceAction === 'pick_up' && paymentMethod === 'venmo' && !hasReceiptPayload(latePaymentReceipt)) {
     throw createLatePickUpRequirementError('Please upload a receipt screenshot for the late pick-up payment.', actionTime);
   }
 
@@ -540,29 +618,38 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
         `, [studentName, parentName, eventDate, actionTime, timestamp, trimmedLateReason]);
       }
     } else {
-      if (!existing.rows.length || !existing.rows[0].drop_off_timestamp) {
-        throw new Error('This student must be dropped off before they can be picked up.');
-      }
-
-      if (existing.rows[0].pick_up_timestamp) {
+      if (existing.rows.length && existing.rows[0].pick_up_timestamp) {
         throw new Error('This student has already been picked up today.');
       }
 
-      const receiptFileName = timingStatus === 'Late'
+      const receiptFileName = timingStatus === 'Late' && paymentMethod === 'venmo'
         ? saveLatePickUpReceipt(studentName, timestamp, latePaymentReceipt)
         : '';
 
-      await dbPool.query(`
-        UPDATE attendance_records
-        SET event_date = COALESCE(event_date, arrival_date),
-            pick_up_parent_name = $1,
-            pick_up_time = $2,
-            pick_up_timestamp = $3,
-            pick_up_late_reason = $4,
-            pick_up_late_payment_confirmed = $5,
-            pick_up_late_payment_receipt = $6
-        WHERE id = $7
-      `, [parentName, actionTime, timestamp, trimmedLateReason, timingStatus === 'Late' ? paymentConfirmed : false, receiptFileName, existing.rows[0].id]);
+      if (existing.rows.length) {
+        await dbPool.query(`
+          UPDATE attendance_records
+          SET event_date = COALESCE(event_date, arrival_date),
+              pick_up_parent_name = $1,
+              pick_up_time = $2,
+              pick_up_timestamp = $3,
+              pick_up_late_reason = $4,
+              pick_up_late_payment_confirmed = $5,
+              pick_up_late_payment_receipt = $6,
+              pick_up_late_payment_method = $7
+          WHERE id = $8
+        `, [parentName, actionTime, timestamp, trimmedLateReason, timingStatus === 'Late' ? paymentConfirmed : false, receiptFileName, paymentMethod, existing.rows[0].id]);
+      } else {
+        await dbPool.query(`
+          INSERT INTO attendance_records (
+            student_name, parent_name, arrival_date, arrival_time, timestamp,
+            event_date, pick_up_parent_name, pick_up_time, pick_up_timestamp,
+            pick_up_late_reason, pick_up_late_payment_confirmed,
+            pick_up_late_payment_receipt, pick_up_late_payment_method
+          )
+          VALUES ($1, $2, $3, $4, $5, $3, $2, $4, $5, $6, $7, $8, $9)
+        `, [studentName, parentName, eventDate, actionTime, timestamp, trimmedLateReason, timingStatus === 'Late' ? paymentConfirmed : false, receiptFileName, paymentMethod]);
+      }
     }
 
     if (timingStatus === 'Late') {
@@ -604,6 +691,7 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
       pickUpTimestamp: session?.pickUpTimestamp,
       pickUpLateReason: session?.pickUpLateReason,
       pickUpLatePaymentConfirmed: session?.pickUpLatePaymentConfirmed,
+      pickUpLatePaymentMethod: session?.pickUpLatePaymentMethod,
     });
 
     if (sessionIndex >= 0) {
@@ -612,27 +700,30 @@ async function recordAttendanceAction(studentName, parentName, action, lateReaso
       records.push(nextSession);
     }
   } else {
-    if (!session?.dropOffTimestamp) {
-      throw new Error('This student must be dropped off before they can be picked up.');
-    }
-
-    if (session.pickUpTimestamp) {
+    if (session?.pickUpTimestamp) {
       throw new Error('This student has already been picked up today.');
     }
 
-    const receiptFileName = timingStatus === 'Late'
+    const receiptFileName = timingStatus === 'Late' && paymentMethod === 'venmo'
       ? saveLatePickUpReceipt(studentName, timestamp, latePaymentReceipt)
       : '';
 
-    records[sessionIndex] = normalizeRecord({
-      ...session,
+    const nextSession = normalizeRecord({
+      ...(session || { studentName, eventDate }),
       pickUpParentName: parentName,
       pickUpTime: actionTime,
       pickUpTimestamp: timestamp,
       pickUpLateReason: trimmedLateReason,
       pickUpLatePaymentConfirmed: timingStatus === 'Late' ? paymentConfirmed : false,
       pickUpLatePaymentReceipt: receiptFileName,
+      pickUpLatePaymentMethod: timingStatus === 'Late' ? paymentMethod : DEFAULT_LATE_PAYMENT_METHOD,
     });
+
+    if (sessionIndex >= 0) {
+      records[sessionIndex] = nextSession;
+    } else {
+      records.push(nextSession);
+    }
   }
 
   writeRecords(records);
@@ -676,13 +767,14 @@ app.post('/checkin', async (req, res) => {
   const action = normalizeAction(req.body.action);
   const lateReason = (req.body.lateReason || '').trim();
   const latePaymentConfirmed = req.body.latePaymentConfirmed;
+  const latePaymentMethod = req.body.latePaymentMethod;
   const latePaymentReceipt = req.body.latePaymentReceipt || null;
   if (!studentName || !parentName) {
     return res.status(400).json({ error: 'Student name and parent name are required' });
   }
 
   try {
-    const attendance = await recordAttendanceAction(studentName, parentName, action, lateReason, latePaymentConfirmed, latePaymentReceipt);
+    const attendance = await recordAttendanceAction(studentName, parentName, action, lateReason, latePaymentConfirmed, latePaymentReceipt, latePaymentMethod);
     return res.json({ success: true, studentName, parentName, ...attendance });
   } catch (error) {
     if (error.requiresLateReason) {
@@ -724,12 +816,8 @@ app.get('/admin/account', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin-account.html'));
 });
 
-app.get('/admin/report-settings', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin-report-settings.html'));
-});
-
-app.get('/admin/sender-settings', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin-sender-settings.html'));
+app.get('/admin/schedule-settings', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin-schedule-settings.html'));
 });
 
 function ensureAdminFile() {
@@ -758,6 +846,8 @@ function getDefaultAdminProfile() {
     lastMonthlyReportSent: null,
     scheduleSettings: normalizeScheduleSettings(),
     dailyReportSettings: normalizeDailyReportSettings(),
+    reportEmailsEnabled: false,
+    paperSavings: normalizePaperSavings(),
   };
 }
 
@@ -785,7 +875,7 @@ function normalizeAdminProfile(profile) {
       latePickUpAfter: profile.latePickUpAfter,
       late_drop_off_after: profile.late_drop_off_after,
       late_pick_up_after: profile.late_pick_up_after,
-      ...(profile.scheduleSettings || {}),
+      ...(profile.scheduleSettings || profile.schedule_settings || {}),
     }),
     dailyReportSettings: normalizeDailyReportSettings({
       reportMode: profile.reportMode,
@@ -800,6 +890,8 @@ function normalizeAdminProfile(profile) {
       pick_up_report_time: profile.pick_up_report_time,
       ...(profile.dailyReportSettings || {}),
     }),
+    reportEmailsEnabled: normalizeBoolean(profile.reportEmailsEnabled ?? profile.report_emails_enabled),
+    paperSavings: normalizePaperSavings(profile.paperSavings),
   };
 }
 
@@ -833,6 +925,9 @@ async function ensureAdminTable() {
       combined_report_time TEXT,
       drop_off_report_time TEXT,
       pick_up_report_time TEXT
+      ,paper_savings TEXT,
+      schedule_settings TEXT,
+      report_emails_enabled BOOLEAN NOT NULL DEFAULT FALSE
     )
   `);
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS report_email TEXT');
@@ -852,6 +947,9 @@ async function ensureAdminTable() {
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS combined_report_time TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS drop_off_report_time TEXT');
   await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS pick_up_report_time TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS paper_savings TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS schedule_settings TEXT');
+  await dbPool.query('ALTER TABLE admin_profile ADD COLUMN IF NOT EXISTS report_emails_enabled BOOLEAN NOT NULL DEFAULT FALSE');
   adminTableReady = true;
 }
 
@@ -892,9 +990,9 @@ async function writeAdminProfile(profile) {
         last_password_change, last_reminder_sent,
         last_daily_report_sent, last_daily_drop_off_report_sent, last_daily_pick_up_report_sent,
         last_monthly_report_sent, late_drop_off_after, late_pick_up_after,
-        daily_report_mode, combined_report_time, drop_off_report_time, pick_up_report_time
+        daily_report_mode, combined_report_time, drop_off_report_time, pick_up_report_time, paper_savings, schedule_settings, report_emails_enabled
       )
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
       ON CONFLICT (id) DO UPDATE SET
         username = EXCLUDED.username,
         password = EXCLUDED.password,
@@ -917,7 +1015,10 @@ async function writeAdminProfile(profile) {
         daily_report_mode = EXCLUDED.daily_report_mode,
         combined_report_time = EXCLUDED.combined_report_time,
         drop_off_report_time = EXCLUDED.drop_off_report_time,
-        pick_up_report_time = EXCLUDED.pick_up_report_time
+        pick_up_report_time = EXCLUDED.pick_up_report_time,
+        paper_savings = EXCLUDED.paper_savings,
+        schedule_settings = EXCLUDED.schedule_settings,
+        report_emails_enabled = EXCLUDED.report_emails_enabled
     `, [
       profile.username,
       profile.password,
@@ -941,6 +1042,9 @@ async function writeAdminProfile(profile) {
       normalizeDailyReportSettings(profile.dailyReportSettings).combinedReportTime,
       normalizeDailyReportSettings(profile.dailyReportSettings).dropOffReportTime,
       normalizeDailyReportSettings(profile.dailyReportSettings).pickUpReportTime,
+      JSON.stringify(normalizePaperSavings(profile.paperSavings)),
+      JSON.stringify(normalizeScheduleSettings(profile.scheduleSettings)),
+      Boolean(profile.reportEmailsEnabled),
     ]);
     return;
   }
@@ -974,8 +1078,8 @@ function isReminderDue(profile) {
 function getMailTransport(profile = {}) {
   const senderSettings = normalizeSenderSettings(profile);
   const host = SMTP_HOST || 'smtp.gmail.com';
-  const authUser = senderSettings.senderEmail || SMTP_USER;
-  const authPass = senderSettings.senderAppPassword || SMTP_PASS;
+  const authUser = SMTP_USER;
+  const authPass = SMTP_PASS;
 
   if (!authUser || !authPass || authPass === 'your-app-password' || authPass === 'your-sender-app-password') {
     return null;
@@ -1057,13 +1161,22 @@ async function trySendLateAttendanceEmail(details) {
   }
 }
 
+function formatReportActionTime(storedTime, timestamp) {
+  const date = timestamp ? new Date(timestamp) : null;
+  if (date && !Number.isNaN(date.getTime())) {
+    return formatArrivalTime(date);
+  }
+  return storedTime || 'Unknown time';
+}
+
 function formatDailyReportRecord(record) {
   const lateLabels = (record.timingFlags || []).join(', ') || 'None';
-  const dropOff = record.dropOffTimestamp
-    ? `${record.dropOffParentName || 'Unknown parent'} at ${record.dropOffTime || formatArrivalTime(new Date(record.dropOffTimestamp))}`
+  const dropOffTimestamp = record.dropOffTimestamp || record.timestamp;
+  const dropOff = dropOffTimestamp
+    ? `${record.dropOffParentName || 'Unknown parent'} at ${formatReportActionTime(record.dropOffTime, dropOffTimestamp)}`
     : 'Not recorded';
   const pickUp = record.pickUpTimestamp
-    ? `${record.pickUpParentName || 'Unknown parent'} at ${record.pickUpTime || formatArrivalTime(new Date(record.pickUpTimestamp))}`
+    ? `${record.pickUpParentName || 'Unknown parent'} at ${formatReportActionTime(record.pickUpTime, record.pickUpTimestamp)}`
     : 'Not recorded';
   const reasons = [
     record.dropOffLateReason ? `Drop-off reason: ${record.dropOffLateReason}` : '',
@@ -1197,9 +1310,9 @@ function createReportPdfBuffer(title, text) {
   return Buffer.from(pdf, 'utf8');
 }
 
-async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new Date()), reportKind = 'combined') {
+async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new Date()), reportKind = 'combined', selectedRecords = null, recipient = '') {
   const transporter = getMailTransport(profile);
-  const recipients = getReportRecipientsWithSender(profile);
+  const recipients = recipient ? normalizeReportRecipients(recipient) : getReportRecipientsWithSender(profile);
   if (!transporter) {
     console.log('SMTP not configured. Daily record report email not sent.');
     return false;
@@ -1214,7 +1327,7 @@ async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new
   const allRecords = (await readRecords()).filter((record) => (
     (record.eventDate || record.arrivalDate) === reportDate
   ));
-  const records = allRecords.filter((record) => {
+  const records = Array.isArray(selectedRecords) ? selectedRecords : allRecords.filter((record) => {
     if (reportKind === 'drop_off') {
       return Boolean(record.dropOffTimestamp || record.timestamp);
     }
@@ -1259,9 +1372,9 @@ async function sendDailyRecordReport(profile, reportDate = formatArrivalDate(new
   return true;
 }
 
-async function sendMonthlyRecordReport(profile, period = getPreviousMonthReportPeriod()) {
+async function sendMonthlyRecordReport(profile, period = getPreviousMonthReportPeriod(), recipient = '') {
   const transporter = getMailTransport(profile);
-  const recipients = getReportRecipientsWithSender(profile);
+  const recipients = recipient ? normalizeReportRecipients(recipient) : getReportRecipientsWithSender(profile);
   if (!transporter) {
     console.log('SMTP not configured. Monthly record report email not sent.');
     return false;
@@ -1312,6 +1425,9 @@ async function checkAndSendMonthlyReport() {
 
   const period = getPreviousMonthReportPeriod();
   const profile = await readAdminProfile();
+  if (!profile.reportEmailsEnabled) {
+    return;
+  }
   if (profile.lastMonthlyReportSent === period.key) {
     return;
   }
@@ -1332,6 +1448,9 @@ async function checkAndSendDailyReport() {
   const now = new Date();
   const reportDate = formatArrivalDate(now);
   const profile = await readAdminProfile();
+  if (!profile.reportEmailsEnabled) {
+    return;
+  }
   const dailyReportSettings = normalizeDailyReportSettings(profile.dailyReportSettings);
 
   if (dailyReportSettings.reportMode === 'separate') {
@@ -1389,6 +1508,17 @@ async function checkAndSendDailyReport() {
   }
 }
 
+async function startReportScheduler() {
+  if (!ENABLE_REPORT_EMAILS) {
+    return;
+  }
+
+  await checkAndSendDailyReport();
+  await checkAndSendMonthlyReport();
+  setInterval(checkAndSendDailyReport, 5 * 60 * 1000);
+  setInterval(checkAndSendMonthlyReport, 24 * 60 * 60 * 1000);
+}
+
 async function checkAndSendPasswordReminder() {
   const profile = await readAdminProfile();
   const reminderDue = isReminderDue(profile);
@@ -1434,7 +1564,7 @@ async function readRecords() {
       SELECT student_name, parent_name, arrival_date, arrival_time, timestamp,
         event_date, drop_off_parent_name, drop_off_time, drop_off_timestamp,
         drop_off_late_reason, pick_up_parent_name, pick_up_time, pick_up_timestamp,
-        pick_up_late_reason, pick_up_late_payment_confirmed, pick_up_late_payment_receipt
+        pick_up_late_reason, pick_up_late_payment_confirmed, pick_up_late_payment_receipt, pick_up_late_payment_method
       FROM attendance_records
       ORDER BY timestamp ASC, id ASC
     `);
@@ -1456,6 +1586,7 @@ async function readRecords() {
       pickUpLateReason: record.pick_up_late_reason,
       pickUpLatePaymentConfirmed: record.pick_up_late_payment_confirmed,
       pickUpLatePaymentReceipt: record.pick_up_late_payment_receipt,
+      pickUpLatePaymentMethod: record.pick_up_late_payment_method,
       });
       return {
         ...normalized,
@@ -1467,8 +1598,7 @@ async function readRecords() {
   ensureAttendanceFile();
   const csv = fs.readFileSync(csvFile, 'utf8');
 
-  return csv.split('\n').filter(Boolean).slice(1).map((line) => {
-    const values = parseCsvLine(line);
+  return parseAttendanceCsv(csv).map(({ row, values }) => {
     let record = null;
     if (values.length === 3) {
       const timestamp = values[2];
@@ -1480,47 +1610,30 @@ async function readRecords() {
         arrivalTime: date && !Number.isNaN(date.getTime()) ? formatArrivalTime(date) : '',
         timestamp,
       });
-    } else if (values.length === 5) {
+    } else if (row.StudentName && row.ParentName && row.Timestamp) {
+      const timestamp = row.Timestamp;
       record = normalizeRecord({
-        studentName: values[0],
-        parentName: values[1],
-        arrivalDate: values[2],
-        arrivalTime: values[3],
-        timestamp: values[4],
+        studentName: row.StudentName,
+        parentName: row.ParentName,
+        arrivalDate: row.ArrivalDate,
+        arrivalTime: row.ArrivalTime,
+        timestamp,
       });
-    } else if (values.length === 8) {
+    } else if (row.StudentName && row.EventDate && row.DropOffTimestamp) {
       record = normalizeRecord({
-        studentName: values[0],
-        eventDate: values[1],
-        dropOffParentName: values[2],
-        dropOffTime: values[3],
-        dropOffTimestamp: values[4],
-        pickUpParentName: values[5],
-        pickUpTime: values[6],
-        pickUpTimestamp: values[7],
-      });
-    } else if (values.length >= 10) {
-      record = normalizeRecord({
-        studentName: values[0],
-        eventDate: values[1],
-        dropOffParentName: values[2],
-        dropOffTime: values[3],
-        dropOffTimestamp: values[4],
-        dropOffLateReason: values[5],
-        pickUpParentName: values[6],
-        pickUpTime: values[7],
-        pickUpTimestamp: values[8],
-        pickUpLateReason: values[9],
-        pickUpLatePaymentConfirmed: values[10] === 'true',
-        pickUpLatePaymentReceipt: values[11] || '',
-      });
-    } else if (values.length >= 6) {
-      record = normalizeRecord({
-        studentName: values[0],
-        parentName: values[1],
-        arrivalDate: values[3],
-        arrivalTime: values[4],
-        timestamp: values[5],
+        studentName: row.StudentName,
+        eventDate: row.EventDate,
+        dropOffParentName: row.DropOffParentName,
+        dropOffTime: row.DropOffTime,
+        dropOffTimestamp: row.DropOffTimestamp,
+        dropOffLateReason: row.DropOffLateReason,
+        pickUpParentName: row.PickUpParentName,
+        pickUpTime: row.PickUpTime,
+        pickUpTimestamp: row.PickUpTimestamp,
+        pickUpLateReason: row.PickUpLateReason,
+        pickUpLatePaymentConfirmed: row.PickUpLatePaymentConfirmed === 'true',
+        pickUpLatePaymentReceipt: row.PickUpLatePaymentReceipt,
+        pickUpLatePaymentMethod: row.PickUpLatePaymentMethod || DEFAULT_LATE_PAYMENT_METHOD,
       });
     }
 
@@ -1535,7 +1648,7 @@ async function readRecords() {
 function writeRecords(records) {
   ensureAttendanceFile();
   const csvLines = [
-    'StudentName,EventDate,DropOffParentName,DropOffTime,DropOffTimestamp,DropOffLateReason,PickUpParentName,PickUpTime,PickUpTimestamp,PickUpLateReason,PickUpLatePaymentConfirmed,PickUpLatePaymentReceipt',
+    'StudentName,EventDate,DropOffParentName,DropOffTime,DropOffTimestamp,DropOffLateReason,PickUpParentName,PickUpTime,PickUpTimestamp,PickUpLateReason,PickUpLatePaymentConfirmed,PickUpLatePaymentReceipt,PickUpLatePaymentMethod',
     ...records.map((record) => {
       const normalized = normalizeRecord(record);
       return [
@@ -1551,6 +1664,7 @@ function writeRecords(records) {
         normalized.pickUpLateReason,
         normalized.pickUpLatePaymentConfirmed ? 'true' : 'false',
         normalized.pickUpLatePaymentReceipt,
+        normalized.pickUpLatePaymentMethod,
       ].map((value) => `"${escapeCsv(value)}"`).join(',');
     }),
   ];
@@ -1565,7 +1679,13 @@ app.post('/api/admin/login', async (req, res) => {
 
   const profile = await readAdminProfile();
   if (username === profile.username && password === profile.password) {
-    return res.json({ username: profile.username, email: profile.email, passwordChangeRequired: isPasswordChangeRequired(profile) });
+    return res.json({
+      username: profile.username,
+      email: profile.email,
+      reportEmailsEnabled: ENABLE_REPORT_EMAILS && profile.reportEmailsEnabled,
+      reportEmailsConfigured: ENABLE_REPORT_EMAILS,
+      passwordChangeRequired: isPasswordChangeRequired(profile),
+    });
   }
 
   return res.status(403).json({ error: 'Invalid username or password' });
@@ -1573,7 +1693,59 @@ app.post('/api/admin/login', async (req, res) => {
 
 app.get('/api/admin/profile', basicAuth, async (req, res) => {
   const profile = await readAdminProfile();
-  res.json({ username: profile.username, email: profile.email, passwordChangeRequired: isPasswordChangeRequired(profile) });
+  res.json({
+    username: profile.username,
+    email: profile.email,
+    reportEmailsEnabled: ENABLE_REPORT_EMAILS && profile.reportEmailsEnabled,
+    reportEmailsConfigured: ENABLE_REPORT_EMAILS,
+    passwordChangeRequired: isPasswordChangeRequired(profile),
+  });
+});
+
+app.post('/api/admin/report-email-settings', basicAuth, async (req, res) => {
+  const profile = await readAdminProfile();
+  const reportEmailsEnabled = normalizeBoolean(req.body.reportEmailsEnabled);
+
+  await writeAdminProfile({ ...profile, reportEmailsEnabled });
+  res.json({
+    reportEmailsEnabled: ENABLE_REPORT_EMAILS && reportEmailsEnabled,
+    reportEmailsConfigured: ENABLE_REPORT_EMAILS,
+  });
+});
+
+app.post('/api/admin/send-report', basicAuth, async (req, res) => {
+  if (!ENABLE_REPORT_EMAILS) {
+    return res.status(503).json({ error: 'Report emails are not enabled.' });
+  }
+
+  const profile = await readAdminProfile();
+  if (!profile.reportEmailsEnabled) {
+    return res.status(503).json({ error: 'Turn on Report Emails before sending a report.' });
+  }
+
+  const recipient = String(req.body.recipient || '').trim();
+  const reportType = String(req.body.reportType || '').trim();
+  if (!isValidEmailValue(recipient)) {
+    return res.status(400).json({ error: 'Enter a valid employee email address.' });
+  }
+  if (!['daily', 'monthly'].includes(reportType)) {
+    return res.status(400).json({ error: 'Choose a daily or monthly report.' });
+  }
+
+  try {
+    const sent = reportType === 'daily'
+      ? await sendDailyRecordReport(profile, formatArrivalDate(new Date()), 'combined', null, recipient)
+      : await sendMonthlyRecordReport(profile, getPreviousMonthReportPeriod(), recipient);
+
+    if (!sent) {
+      return res.status(503).json({ error: 'Email is not configured on the server.' });
+    }
+
+    return res.json({ message: `Report sent to ${recipient}.` });
+  } catch (error) {
+    const statusCode = error.statusCode || 502;
+    return res.status(statusCode).json({ error: error.message || 'Unable to send the report.' });
+  }
 });
 
 app.post('/api/admin/profile', basicAuth, async (req, res) => {
@@ -1596,6 +1768,7 @@ app.post('/api/admin/profile', basicAuth, async (req, res) => {
     monthlyReportEmail: currentProfile.monthlyReportEmail || currentProfile.reportEmail || email,
     reportRecipients: currentProfile.reportRecipients || normalizeReportRecipients(currentProfile.reportEmail || email),
     senderSettings: currentProfile.senderSettings || normalizeSenderSettings(currentProfile),
+    reportEmailsEnabled: currentProfile.reportEmailsEnabled === true,
     lastPasswordChange: new Date().toISOString(),
     lastReminderSent: currentProfile.lastReminderSent || null,
     lastMonthlyReportSent: currentProfile.lastMonthlyReportSent || null,
@@ -1611,9 +1784,23 @@ app.get('/api/admin/schedule-settings', basicAuth, async (req, res) => {
 });
 
 app.post('/api/admin/schedule-settings', basicAuth, async (req, res) => {
+  const submittedTimes = [
+    req.body.regular?.lateDropOffAfter,
+    req.body.regular?.pickUpBegins,
+    req.body.regular?.latePickUpAfter,
+    req.body.wednesday?.lateDropOffAfter,
+    req.body.wednesday?.pickUpBegins,
+    req.body.wednesday?.latePickUpAfter,
+  ];
+  if (!submittedTimes.every(isValidTimeValue)) {
+    return res.status(400).json({ error: 'All schedule times must use HH:MM format.' });
+  }
   const scheduleSettings = normalizeScheduleSettings(req.body);
-  if (!isValidTimeValue(req.body.lateDropOffAfter) || !isValidTimeValue(req.body.latePickUpAfter)) {
-    return res.status(400).json({ error: 'Late drop-off and late pick-up times must use HH:MM format.' });
+  if (
+    timeToMinutes(scheduleSettings.regular.pickUpBegins) >= timeToMinutes(scheduleSettings.regular.latePickUpAfter)
+    || timeToMinutes(scheduleSettings.wednesday.pickUpBegins) >= timeToMinutes(scheduleSettings.wednesday.latePickUpAfter)
+  ) {
+    return res.status(400).json({ error: 'Pick-up begins must be earlier than late pick-up.' });
   }
 
   const profile = await readAdminProfile();
@@ -1625,115 +1812,41 @@ app.post('/api/admin/schedule-settings', basicAuth, async (req, res) => {
   res.json(scheduleSettings);
 });
 
-app.get('/api/admin/report-settings', basicAuth, async (req, res) => {
+app.get('/api/admin/paper-savings', basicAuth, async (req, res) => {
   const profile = await readAdminProfile();
-  res.json({
-    reportRecipients: normalizeReportRecipients(profile.reportRecipients, profile.reportEmail || profile.email),
-    maxReportRecipients: MAX_REPORT_RECIPIENTS,
-  });
+  res.json(getPaperSavingsSummary(profile.paperSavings));
 });
 
-app.post('/api/admin/report-settings', basicAuth, async (req, res) => {
-  const rawRecipients = Array.isArray(req.body.reportRecipients)
-    ? req.body.reportRecipients
-    : normalizeReportRecipients(req.body.reportRecipients || req.body.reportEmail);
-  if (rawRecipients.length > MAX_REPORT_RECIPIENTS) {
-    return res.status(400).json({ error: `You can add up to ${MAX_REPORT_RECIPIENTS} report receivers.` });
-  }
-
-  const reportRecipients = normalizeReportRecipients(req.body.reportRecipients || req.body.reportEmail);
-  if (reportRecipients.some((email) => !isValidEmailValue(email))) {
-    return res.status(400).json({ error: 'Every report receiver must be a valid email address.' });
+app.post('/api/admin/paper-savings', basicAuth, async (req, res) => {
+  const savedRows = Number(req.body.savedRows);
+  const reportId = String(req.body.reportId || '');
+  if (!Number.isInteger(savedRows) || savedRows <= 0 || savedRows > 100000 || !reportId || reportId.length > 20000) {
+    return res.status(400).json({ error: 'A valid paper-saving report is required.' });
   }
 
   const profile = await readAdminProfile();
-  await writeAdminProfile({
-    ...profile,
-    reportEmail: reportRecipients[0] || profile.reportEmail,
-    dailyReportEmail: reportRecipients[0] || profile.dailyReportEmail,
-    monthlyReportEmail: reportRecipients[0] || profile.monthlyReportEmail,
-    reportRecipients,
-  });
-
-  res.json({ reportRecipients, maxReportRecipients: MAX_REPORT_RECIPIENTS });
-});
-
-app.get('/api/admin/sender-settings', basicAuth, async (req, res) => {
-  const profile = await readAdminProfile();
-  const senderSettings = normalizeSenderSettings(profile);
-  res.json({
-    senderEmail: senderSettings.senderEmail,
-    senderName: senderSettings.senderName,
-    dailyReportSettings: normalizeDailyReportSettings(profile.dailyReportSettings),
-    hasSenderAppPassword: Boolean(senderSettings.senderAppPassword && !senderSettings.senderAppPassword.startsWith('your-')),
-  });
-});
-
-app.post('/api/admin/sender-settings', basicAuth, async (req, res) => {
-  const senderEmail = String(req.body.senderEmail || '').trim();
-  const senderAppPassword = String(req.body.senderAppPassword || '').trim();
-  const senderName = String(req.body.senderName || DEFAULT_SENDER_NAME).trim() || DEFAULT_SENDER_NAME;
-
-  if (!isValidEmailValue(senderEmail)) {
-    return res.status(400).json({ error: 'Sender email must be a valid email address.' });
+  const paperSavings = normalizePaperSavings(profile.paperSavings);
+  if (!paperSavings.entries.some((entry) => entry.reportId === reportId)) {
+    paperSavings.entries.push({ date: formatArrivalDate(new Date()), reportId, savedRows });
+    paperSavings.entries = paperSavings.entries.slice(-400);
+    await writeAdminProfile({ ...profile, paperSavings });
   }
-
-  const profile = await readAdminProfile();
-  const existingSenderSettings = normalizeSenderSettings(profile);
-  if (!senderAppPassword && !existingSenderSettings.senderAppPassword) {
-    return res.status(400).json({ error: 'Sender app password is required.' });
-  }
-
-  await writeAdminProfile({
-    ...profile,
-    senderSettings: {
-      senderEmail,
-      senderAppPassword: senderAppPassword || existingSenderSettings.senderAppPassword,
-      senderName,
-    },
-  });
-
-  res.json({ senderEmail, senderName, hasSenderAppPassword: true });
-});
-
-app.post('/api/admin/daily-report-settings', basicAuth, async (req, res) => {
-  const dailyReportSettings = normalizeDailyReportSettings(req.body.dailyReportSettings || {});
-  const profile = await readAdminProfile();
-
-  await writeAdminProfile({
-    ...profile,
-    dailyReportSettings,
-  });
-
-  res.json({ dailyReportSettings });
-});
-
-app.post('/api/admin/daily-report/email', basicAuth, async (req, res) => {
-  try {
-    const profile = await readAdminProfile();
-    const sent = await sendDailyRecordReport(profile);
-
-    if (!sent) {
-      return res.status(503).json({ error: 'Sender settings are not configured. Add sender email and app password before emailing reports.' });
-    }
-
-    return res.json({ message: 'Daily report sent.' });
-  } catch (error) {
-    const statusCode = error.statusCode || 500;
-    return res.status(statusCode).json({ error: error.message || 'Unable to email daily report' });
-  }
+  res.json(getPaperSavingsSummary(paperSavings));
 });
 
 app.get('/api/records', basicAuth, async (req, res) => {
   res.json(await readRecords());
 });
 
-app.get('/api/records/export', basicAuth, async (req, res) => {
-  const searchTerm = String(req.query.search || '').trim().toLowerCase();
+app.post('/api/records/export', basicAuth, async (req, res) => {
+  const recordKeys = Array.isArray(req.body.recordKeys) ? req.body.recordKeys : [];
   const records = await readRecords();
   const filteredRecords = records.filter((record) => {
-    const name = `${record.studentName || ''} / ${record.parentName || ''}`.toLowerCase();
-    return !searchTerm || name.includes(searchTerm);
+    return recordKeys.some((key) => (
+      key.studentName === record.studentName
+      && key.eventDate === record.eventDate
+      && key.dropOffTimestamp === (record.dropOffTimestamp || record.timestamp)
+    ));
   });
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('Attendance');
@@ -1783,8 +1896,8 @@ app.get('/api/late-pickup-receipts/:fileName', basicAuth, (req, res) => {
 });
 
 app.delete('/api/records', basicAuth, async (req, res) => {
-  const { studentName, eventDate, dropOffTimestamp, timestamp } = req.body;
-  const recordTimestamp = dropOffTimestamp || timestamp;
+  const { studentName, eventDate, dropOffTimestamp, pickUpTimestamp, timestamp } = req.body;
+  const recordTimestamp = dropOffTimestamp || timestamp || pickUpTimestamp;
   if (!studentName || !eventDate || !recordTimestamp) {
     return res.status(400).send('Student name, event date, and drop-off timestamp are required');
   }
@@ -1797,7 +1910,7 @@ app.delete('/api/records', basicAuth, async (req, res) => {
         SELECT id FROM attendance_records
         WHERE student_name = $1
           AND COALESCE(event_date, arrival_date) = $2
-          AND COALESCE(drop_off_timestamp, timestamp) = $3
+          AND COALESCE(drop_off_timestamp, timestamp, pick_up_timestamp) = $3
         ORDER BY id ASC
         LIMIT 1
       )
@@ -1816,12 +1929,12 @@ app.delete('/api/records', basicAuth, async (req, res) => {
   const deletedRecord = records.find((record) => (
     record.studentName === studentName
     && record.eventDate === eventDate
-    && record.dropOffTimestamp === recordTimestamp
+    && (record.dropOffTimestamp || record.timestamp || record.pickUpTimestamp) === recordTimestamp
   ));
   const remaining = records.filter((record) => !(
     record.studentName === studentName
     && record.eventDate === eventDate
-    && record.dropOffTimestamp === recordTimestamp
+    && (record.dropOffTimestamp || record.timestamp || record.pickUpTimestamp) === recordTimestamp
   ));
   if (remaining.length === records.length) {
     return res.status(404).send('Record not found');
@@ -1841,11 +1954,8 @@ if (require.main === module) {
     console.log(`Admin storage: ${dbPool ? 'database' : adminFile}`);
 
     await checkAndSendPasswordReminder();
-    await checkAndSendDailyReport();
-    await checkAndSendMonthlyReport();
+    await startReportScheduler();
     setInterval(checkAndSendPasswordReminder, 24 * 60 * 60 * 1000);
-    setInterval(checkAndSendDailyReport, 5 * 60 * 1000);
-    setInterval(checkAndSendMonthlyReport, 24 * 60 * 60 * 1000);
   });
 }
 

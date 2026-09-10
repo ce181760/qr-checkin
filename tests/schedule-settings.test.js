@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeScheduleSettings, getEffectiveScheduleTime } = require('../schedule-settings');
+const { normalizeScheduleSettings, getEffectiveScheduleTime, getDaySchedule } = require('../schedule-settings');
 
 test('normalizes weekday and date overrides', () => {
   const settings = normalizeScheduleSettings({
@@ -53,4 +53,14 @@ test('falls back to the default cutoff when no override matches', () => {
   });
 
   assert.equal(getEffectiveScheduleTime('pick_up', '2026-08-12T10:00:00-04:00', settings), '13:35');
+});
+
+test('uses the regular schedule on Monday and Wednesday early-release schedule on Wednesday', () => {
+  const settings = {
+    regular: { lateDropOffAfter: '08:15', pickUpBegins: '14:30', latePickUpAfter: '14:45' },
+    wednesday: { lateDropOffAfter: '08:15', pickUpBegins: '13:30', latePickUpAfter: '13:45' },
+  };
+
+  assert.deepEqual(getDaySchedule('2026-08-10T14:29:00-04:00', settings), settings.regular);
+  assert.deepEqual(getDaySchedule('2026-08-12T13:31:00-04:00', settings), settings.wednesday);
 });

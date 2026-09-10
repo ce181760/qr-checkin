@@ -89,6 +89,17 @@ function showAccountPage(profile) {
   currentProfile = profile;
   document.getElementById('profileUsername').value = profile.username;
   document.getElementById('profileEmail').value = profile.email;
+  const reportEmailsToggle = document.getElementById('reportEmailsEnabled');
+  reportEmailsToggle.checked = profile.reportEmailsEnabled === true;
+  reportEmailsToggle.disabled = profile.reportEmailsConfigured !== true;
+  document.getElementById('reportEmailsStatus').innerText = reportEmailsToggle.checked ? 'ON' : 'OFF';
+  document.getElementById('reportEmailsNote').innerText = profile.reportEmailsConfigured === true
+    ? 'Report emails are controlled by the server configuration.'
+    : 'Report emails are disabled by the server configuration.';
+  reportEmailsToggle.onchange = toggleReportEmails;
+  document.getElementById('reportRecipient').value = '';
+  document.getElementById('sendReportButton').disabled = profile.reportEmailsEnabled !== true;
+  document.getElementById('reportSendMessage').innerText = '';
   document.getElementById('profilePassword').value = '';
   document.getElementById('profileMessage').innerText = '';
 
@@ -99,6 +110,78 @@ function showAccountPage(profile) {
   } else {
     banner.style.display = 'none';
   }
+}
+
+function toggleReportEmails() {
+  const enabled = document.getElementById('reportEmailsEnabled').checked;
+  fetch('/api/admin/report-email-settings', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: authHeader,
+    },
+    body: JSON.stringify({ reportEmailsEnabled: enabled }),
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(await response.text() || 'Unable to update report email settings');
+      }
+      return response.json();
+    })
+    .then((settings) => {
+      currentProfile.reportEmailsEnabled = settings.reportEmailsEnabled === true;
+      document.getElementById('reportEmailsEnabled').checked = currentProfile.reportEmailsEnabled;
+      document.getElementById('reportEmailsStatus').innerText = currentProfile.reportEmailsEnabled ? 'ON' : 'OFF';
+      document.getElementById('sendReportButton').disabled = !currentProfile.reportEmailsEnabled;
+      showMessage('Report email setting updated.', false);
+    })
+    .catch((error) => {
+      showMessage(error.message, true);
+      showAccountPage(currentProfile);
+    });
+}
+
+function sendReportByEmail() {
+  const recipient = document.getElementById('reportRecipient').value.trim();
+  const reportType = document.getElementById('reportType').value;
+  const button = document.getElementById('sendReportButton');
+  const message = document.getElementById('reportSendMessage');
+
+  if (!recipient) {
+    message.innerText = 'Enter an employee email address.';
+    message.style.color = '#b91c1c';
+    return;
+  }
+
+  button.disabled = true;
+  message.innerText = 'Sending report...';
+  message.style.color = '';
+  fetch('/api/admin/send-report', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: authHeader,
+    },
+    body: JSON.stringify({ recipient, reportType }),
+  })
+    .then(async (response) => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || 'Unable to send the report.');
+      }
+      return data;
+    })
+    .then((data) => {
+      message.innerText = data.message || 'Report sent.';
+      message.style.color = '#166534';
+    })
+    .catch((error) => {
+      message.innerText = error.message;
+      message.style.color = '#b91c1c';
+    })
+    .finally(() => {
+      button.disabled = false;
+    });
 }
 
 function saveProfile() {

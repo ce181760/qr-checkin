@@ -16,11 +16,22 @@
     const params = new URLSearchParams(window.location.search);
     const studentName = params.get('studentName');
     const parentName = params.get('parentName');
+    const action = params.get('action');
+    const eventDate = params.get('eventDate');
+    const actionTime = params.get('actionTime');
+    const timingStatus = params.get('timingStatus');
+    const lateReason = params.get('lateReason');
 
-    if (studentName || parentName) {
+    if (studentName || parentName || eventDate || actionTime || timingStatus || lateReason) {
       const message = [];
+      const actionLabel = action === 'pick_up' ? 'Pick-up' : 'Drop-off';
       if (studentName) message.push(`Student: ${studentName}`);
       if (parentName) message.push(`Parent: ${parentName}`);
+      if (action) message.push(`Action: ${actionLabel}`);
+      if (eventDate) message.push(`Date: ${eventDate}`);
+      if (actionTime) message.push(`Time: ${actionTime}`);
+      if (timingStatus) message.push(`Status: ${timingStatus}`);
+      if (lateReason) message.push(`Reason: ${lateReason}`);
       document.getElementById('successMessage').innerText = `Check-in successful! ${message.join(' · ')}`;
     }
   </script>
