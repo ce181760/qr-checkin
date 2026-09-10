@@ -555,65 +555,39 @@ function applyFilters() {
   renderTable(filtered);
 }
 
-function exportCSV() {
+async function exportExcel() {
   const recordsToExport = getFilteredRecords();
   if (!recordsToExport.length) {
-    alert("No records to export.");
+    alert('No records to export.');
     return;
   }
 
-  // Export clean individual columns so Excel opens every field in its OWN box/column!
-  const headers = [
-    "Student Name",
-    "Event Date",
-    "Drop-off Parent",
-    "Drop-off Time",
-    "Drop-off Status",
-    "Drop-off Late Reason",
-    "Pick-up Parent",
-    "Pick-up Time",
-    "Pick-up Status",
-    "Pick-up Late Reason"
-  ];
-
-  const sanitizeCell = (value) => String(value || '')
-    .replace(/\r?\n|\r/g, ' ')
-    .replace(/\t/g, ' ');
-  let csvContent = `\uFEFF${headers.map(sanitizeCell).join('\t')}\n`;
-
-  recordsToExport.forEach(r => {
-    const dropOffStatus = r.dropOffLateReason || (r.timingFlags && r.timingFlags.includes('Late Drop-off')) ? "Late" : (r.dropOffTime ? "On time" : "");
-    const pickUpStatus = r.pickUpLateReason || (r.timingFlags && r.timingFlags.includes('Late Pick-up')) ? "Late" : (r.pickUpTime ? "Picked up" : "");
-
-    const rowValues = [
-      r.studentName || '',
-      r.eventDate || '',
-      r.dropOffParentName || r.parentName || '',
-      r.dropOffTime || '',
-      dropOffStatus,
-      r.dropOffLateReason || '',
-      r.pickUpParentName || '',
-      r.pickUpTime || '',
-      pickUpStatus,
-      r.pickUpLateReason || ''
-    ];
-
-    csvContent += rowValues.map(sanitizeCell).join('\t') + "\n";
+  const response = await fetch('/api/records/export', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: authHeader,
+    },
+    body: JSON.stringify({
+      recordKeys: recordsToExport.map((record) => ({
+        studentName: record.studentName,
+        eventDate: record.eventDate,
+        dropOffTimestamp: record.dropOffTimestamp || record.timestamp,
+      })),
+    }),
   });
 
-  const activeDate = document.getElementById("filterDate")?.value
-    || document.getElementById('filterStartDate')?.value
-    || (activeTab === 'today' ? getTodayYYYYMMDD() : 'all');
-  const filename = `attendance_report_${activeDate}.tsv`;
+  if (!response.ok) {
+    alert('Unable to export attendance records. Please try again.');
+    return;
+  }
 
-  const blob = new Blob([csvContent], { type: 'text/tab-separated-values;charset=utf-8;' });
+  const blob = await response.blob();
   const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `attendance_${new Date().toISOString().slice(0, 10)}.xlsx`;
+  link.click();
   window.URL.revokeObjectURL(url);
 }
 

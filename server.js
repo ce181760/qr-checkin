@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const nodemailer = require('nodemailer');
 const { Pool } = require('pg');
+const ExcelJS = require('exceljs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1835,6 +1836,47 @@ app.post('/api/admin/paper-savings', basicAuth, async (req, res) => {
 
 app.get('/api/records', basicAuth, async (req, res) => {
   res.json(await readRecords());
+});
+
+app.post('/api/records/export', basicAuth, async (req, res) => {
+  const recordKeys = Array.isArray(req.body.recordKeys) ? req.body.recordKeys : [];
+  const records = await readRecords();
+  const filteredRecords = records.filter((record) => {
+    return recordKeys.some((key) => (
+      key.studentName === record.studentName
+      && key.eventDate === record.eventDate
+      && key.dropOffTimestamp === (record.dropOffTimestamp || record.timestamp)
+    ));
+  });
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Attendance');
+
+  worksheet.columns = [
+    { header: 'Name', key: 'name', width: 30 },
+    { header: 'Date', key: 'eventDate', width: 14 },
+    { header: 'Drop-Off Time', key: 'dropOffTime', width: 18 },
+    { header: 'Pick-Up Time', key: 'pickUpTime', width: 18 },
+    { header: 'Status', key: 'status', width: 18 },
+  ];
+  worksheet.getRow(1).font = { bold: true };
+
+  filteredRecords.forEach((record) => {
+    worksheet.addRow({
+      name: `${record.studentName || ''} / ${record.parentName || ''}`,
+      eventDate: record.eventDate || '',
+      dropOffTime: record.dropOffTime || '',
+      pickUpTime: record.pickUpTime || '',
+      status: record.pickUpTimestamp ? 'Complete' : 'Checked in',
+    });
+  });
+  worksheet.getColumn('eventDate').numFmt = 'm/d/yyyy';
+
+  const fileName = `attendance_${new Date().toISOString().slice(0, 10)}.xlsx`;
+  res.set({
+    'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition': `attachment; filename="${fileName}"`,
+  });
+  res.send(Buffer.from(await workbook.xlsx.writeBuffer()));
 });
 
 app.get('/api/late-pickup-receipts/:fileName', basicAuth, (req, res) => {
