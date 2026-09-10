@@ -237,24 +237,23 @@ function filterTable() {
   });
 }
 
-function exportCSV() {
-  const rows = document.querySelectorAll("#data tr");
-  let csv = "Name,Check-in Time\n";
-
-  rows.forEach(row => {
-    if (row.style.display !== "none") {
-      const name = row.cells[0].innerText.replace(/"/g, '""');
-      const time = row.cells[1].innerText.replace(/"/g, '""');
-      csv += `"${name}","${time}"\n`;
-    }
+async function exportExcel() {
+  const search = document.getElementById('search').value.trim();
+  const response = await fetch(`/api/records/export?search=${encodeURIComponent(search)}`, {
+    headers: { Authorization: authHeader },
   });
 
-  const blob = new Blob([csv], { type: "text/csv" });
+  if (!response.ok) {
+    alert('Unable to export attendance records. Please try again.');
+    return;
+  }
+
+  const blob = await response.blob();
   const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `attendance_${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `attendance_${new Date().toISOString().slice(0, 10)}.xlsx`;
+  link.click();
   window.URL.revokeObjectURL(url);
 }
 
