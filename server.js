@@ -1633,7 +1633,7 @@ async function readRecords() {
         arrivalTime: row.ArrivalTime,
         timestamp,
       });
-    } else if (row.StudentName && row.EventDate && row.DropOffTimestamp) {
+    } else if (row.StudentName && row.EventDate && (row.DropOffTimestamp || row.PickUpTimestamp)) {
       record = normalizeRecord({
         studentName: row.StudentName,
         eventDate: row.EventDate,

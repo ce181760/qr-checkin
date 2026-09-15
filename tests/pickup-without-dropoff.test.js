@@ -26,6 +26,17 @@ test('allows a student to be picked up without a prior drop-off record', async (
     assert.equal(response.status, 200, `Expected 200 but got ${response.status}: ${JSON.stringify(payload)}`);
     assert.equal(payload.success, true);
     assert.equal(payload.action, 'pick_up');
+
+    const auth = Buffer.from('admin:admin123').toString('base64');
+    const recordsResponse = await fetch(`http://127.0.0.1:${port}/api/records`, {
+      headers: { Authorization: `Basic ${auth}` },
+    });
+    const records = await recordsResponse.json();
+    const record = records.find((entry) => entry.studentName === payload.studentName);
+
+    assert.equal(recordsResponse.status, 200);
+    assert.ok(record, 'Pickup-only record should appear in reports');
+    assert.equal(record.pickUpParentName, 'Parent Test');
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
