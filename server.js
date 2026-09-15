@@ -198,6 +198,20 @@ function normalizeSenderSettings() {
   };
 }
 
+let nowOverride = null;
+
+function getNow() {
+  return nowOverride ? new Date(nowOverride) : new Date();
+}
+
+function setNowForTest(isoString) {
+  nowOverride = isoString;
+}
+
+function clearNowForTest() {
+  nowOverride = null;
+}
+
 function normalizeScheduleSettings(settings = {}) {
   let source = settings;
   if (typeof settings === 'string') {
@@ -545,7 +559,7 @@ function findSessionIndex(records, studentName, eventDate) {
 
 async function recordAttendanceAction(studentName, parentName, action, lateReason = '', latePaymentConfirmed = false, latePaymentReceipt = null, latePaymentMethod = DEFAULT_LATE_PAYMENT_METHOD) {
   const attendanceAction = normalizeAction(action);
-  const actionAt = new Date();
+  const actionAt = getNow();
   const timestamp = actionAt.toISOString();
   const eventDate = formatArrivalDate(actionAt);
   const actionTime = formatArrivalTime(actionAt);
@@ -1852,21 +1866,42 @@ app.post('/api/records/export', basicAuth, async (req, res) => {
   const worksheet = workbook.addWorksheet('Attendance');
 
   worksheet.columns = [
-    { header: 'Name', key: 'name', width: 30 },
+    { header: 'Student Name', key: 'studentName', width: 28 },
+    { header: 'Parent / Pickup Parent', key: 'parentName', width: 26 },
+    { header: 'Who completed pickup', key: 'pickupParentName', width: 26 },
     { header: 'Date', key: 'eventDate', width: 14 },
     { header: 'Drop-Off Time', key: 'dropOffTime', width: 18 },
     { header: 'Pick-Up Time', key: 'pickUpTime', width: 18 },
     { header: 'Status', key: 'status', width: 18 },
+    { header: 'Pickup Timing', key: 'pickupTiming', width: 18 },
+    { header: 'Late Pickup Reason', key: 'latePickupReason', width: 28 },
+    { header: 'Payment Confirmed', key: 'paymentConfirmed', width: 18 },
+    { header: 'Payment Method', key: 'paymentMethod', width: 18 },
+    { header: 'Receipt Uploaded', key: 'receiptUploaded', width: 18 },
   ];
   worksheet.getRow(1).font = { bold: true };
 
   filteredRecords.forEach((record) => {
+    const hasPickup = Boolean(record.pickUpTimestamp);
+    const pickupTiming = hasPickup ? (record.timingFlags?.includes('Late Pick-up') ? 'Late Pick-up' : 'On Time') : 'Not Picked Up';
+    const latePickupReason = record.pickUpLateReason || (record.pickUpTimestamp && record.timingFlags?.includes('Late Pick-up') ? 'Late pickup' : '');
+    const paymentConfirmed = hasPickup ? (record.pickUpLatePaymentConfirmed ? 'Yes' : 'No') : '';
+    const paymentMethod = record.pickUpLatePaymentMethod || (hasPickup ? 'Venmo' : '');
+    const receiptUploaded = hasPickup ? (record.pickUpLatePaymentReceipt ? 'Yes' : 'No') : '';
+
     worksheet.addRow({
-      name: `${record.studentName || ''} / ${record.parentName || ''}`,
+      studentName: record.studentName || '',
+      parentName: record.parentName || record.dropOffParentName || '',
+      pickupParentName: record.pickUpParentName || '',
       eventDate: record.eventDate || '',
       dropOffTime: record.dropOffTime || '',
       pickUpTime: record.pickUpTime || '',
-      status: record.pickUpTimestamp ? 'Complete' : 'Checked in',
+      status: hasPickup ? 'Complete' : 'Checked in',
+      pickupTiming,
+      latePickupReason,
+      paymentConfirmed,
+      paymentMethod: paymentMethod ? paymentMethod.charAt(0).toUpperCase() + paymentMethod.slice(1) : '',
+      receiptUploaded,
     });
   });
   worksheet.getColumn('eventDate').numFmt = 'm/d/yyyy';
@@ -1959,4 +1994,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, canRecordPickup };
+module.exports = { app, canRecordPickup, getNow, setNowForTest, clearNowForTest, recordAttendanceAction };
