@@ -172,7 +172,7 @@ function updateReasonPrompt() {
   lateReasonRequired = false;
   latePaymentRequired = false;
   lateReason.required = false;
-  lateReasonLabel.innerText = `${document.querySelector('input[name="action"]:checked').value === 'pick_up' ? 'Pick-up' : 'Drop-off'} reason (optional)`;
+  lateReasonLabel.innerText = `${document.querySelector('input[name="action"]:checked').value === 'pick_up' ? 'Pick-up' : 'Drop-off'} reason`;
   paymentGroup.hidden = true;
   latePaymentConfirmed.required = false;
   latePaymentConfirmed.checked = false;
